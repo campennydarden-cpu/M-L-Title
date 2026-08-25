@@ -1,0 +1,408 @@
+<title>Genesis Brand Concept</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --navy: #12213A;
+    --navy-ink: #16212F;
+    --slate: #3E5872;
+    --slate-soft: #A9B9C8;
+    --teal: #4FAFA0;
+    --teal-deep: #397F75;
+    --paper: #F4F6F8;
+    --paper-card: #FFFFFF;
+    --line: #DCE3E9;
+    --green: #1E8A4C;
+    --green-bg: #E4F5EA;
+    --amber: #B4740E;
+    --amber-bg: #FBEDD8;
+    --red: #C23A2B;
+    --red-bg: #FBE6E2;
+  }
+
+  *{ box-sizing: border-box; }
+
+  body{
+    margin: 0;
+    background: var(--paper);
+    color: var(--navy-ink);
+    font-family: 'Public Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    line-height: 1.5;
+  }
+
+  .page{
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 72px 32px 120px;
+  }
+
+  /* ---------- Hero / lockup ---------- */
+  .hero{
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    padding-bottom: 64px;
+    margin-bottom: 56px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .mark{ width: 148px; height: 148px; margin-bottom: 28px; }
+
+  .wordmark{
+    font-family: 'Fraunces', Georgia, serif;
+    font-optical-sizing: auto;
+    font-weight: 600;
+    font-size: 56px;
+    letter-spacing: 0.01em;
+    color: var(--navy);
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .company-line{
+    margin-top: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--slate);
+  }
+
+  .hero-caption{
+    margin-top: 20px;
+    max-width: 480px;
+    font-size: 15px;
+    color: var(--slate);
+  }
+
+  /* ---------- Section scaffolding ---------- */
+  section{ margin-bottom: 64px; }
+
+  .section-head{
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 22px;
+  }
+
+  .section-title{
+    font-family: 'Fraunces', Georgia, serif;
+    font-weight: 600;
+    font-size: 24px;
+    color: var(--navy);
+    margin: 0;
+  }
+
+  .section-note{
+    font-size: 13px;
+    color: var(--slate);
+    max-width: 320px;
+    text-align: right;
+  }
+
+  /* ---------- Palette ---------- */
+  .swatch-grid{
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+  }
+
+  .swatch{
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    background: var(--paper-card);
+  }
+
+  .swatch-fill{ height: 84px; }
+
+  .swatch-body{ padding: 14px 16px 16px; }
+
+  .swatch-name{ font-weight: 600; font-size: 14px; color: var(--navy-ink); }
+
+  .swatch-hex{
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--slate);
+    margin-top: 2px;
+  }
+
+  .swatch-use{
+    font-size: 12px;
+    color: var(--slate);
+    margin-top: 8px;
+    line-height: 1.45;
+  }
+
+  /* ---------- Status colors ---------- */
+  .status-panel{
+    background: var(--paper-card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 28px;
+  }
+
+  .status-row{
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+  }
+
+  .status-card{
+    border-radius: 10px;
+    padding: 18px 18px 16px;
+    border: 1px solid transparent;
+  }
+
+  .status-card.green{ background: var(--green-bg); border-color: color-mix(in srgb, var(--green) 25%, transparent); }
+  .status-card.amber{ background: var(--amber-bg); border-color: color-mix(in srgb, var(--amber) 25%, transparent); }
+  .status-card.red{ background: var(--red-bg); border-color: color-mix(in srgb, var(--red) 25%, transparent); }
+
+  .status-dot{
+    width: 10px; height: 10px; border-radius: 50%;
+    display: inline-block; margin-right: 8px;
+  }
+  .status-card.green .status-dot{ background: var(--green); }
+  .status-card.amber .status-dot{ background: var(--amber); }
+  .status-card.red .status-dot{ background: var(--red); }
+
+  .status-label{ font-weight: 600; font-size: 14px; }
+  .status-card.green .status-label{ color: var(--green); }
+  .status-card.amber .status-label{ color: var(--amber); }
+  .status-card.red .status-label{ color: var(--red); }
+
+  .status-example{
+    font-size: 12.5px;
+    color: var(--navy-ink);
+    margin-top: 10px;
+  }
+
+  .status-hex{
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11.5px;
+    color: var(--slate);
+    margin-top: 8px;
+  }
+
+  /* ---------- Applied mockup ---------- */
+  .mock-window{
+    border-radius: 12px;
+    border: 1px solid var(--line);
+    overflow: hidden;
+    background: var(--paper-card);
+    box-shadow: 0 1px 2px rgba(18,33,58,0.04);
+  }
+
+  .mock-toolbar{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 20px;
+    background: var(--navy);
+    color: white;
+  }
+
+  .mock-toolbar-left{ display: flex; align-items: center; gap: 12px; }
+
+  .mock-mark-small{ width: 24px; height: 24px; }
+
+  .mock-file{ font-size: 13px; font-weight: 600; letter-spacing: 0.01em; }
+  .mock-file span{ color: var(--slate-soft); font-weight: 500; margin-left: 8px; }
+
+  .badge{
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    padding: 4px 10px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .badge.green{ background: var(--green-bg); color: var(--green); }
+  .badge.amber{ background: var(--amber-bg); color: var(--amber); }
+
+  .mock-badges{ display: flex; gap: 8px; }
+
+  .mock-banner{
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 16px 20px;
+    background: var(--red-bg);
+    border-bottom: 1px solid var(--line);
+    font-size: 13px;
+    color: var(--red);
+  }
+
+  .mock-banner strong{ font-weight: 600; }
+
+  .mock-body{
+    padding: 24px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .mock-body-text{ font-size: 13px; color: var(--slate); max-width: 340px; }
+
+  .btn{
+    font-family: 'Public Sans', sans-serif;
+    font-weight: 600;
+    font-size: 13px;
+    color: white;
+    background: var(--teal);
+    border: none;
+    border-radius: 8px;
+    padding: 10px 18px;
+    cursor: default;
+    white-space: nowrap;
+  }
+
+  footer{
+    margin-top: 72px;
+    padding-top: 24px;
+    border-top: 1px solid var(--line);
+    font-size: 12px;
+    color: var(--slate);
+    text-align: center;
+  }
+
+  @media (max-width: 640px){
+    .swatch-grid{ grid-template-columns: repeat(2, 1fr); }
+    .status-row{ grid-template-columns: 1fr; }
+    .mock-body{ flex-direction: column; align-items: flex-start; }
+    .section-head{ flex-direction: column; align-items: flex-start; }
+    .section-note{ text-align: left; }
+  }
+</style>
+
+<div class="page">
+
+  <div class="hero">
+    <svg class="mark" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="100" cy="100" r="88" stroke="var(--slate-soft)" stroke-width="2" opacity="0.55"/>
+      <circle cx="100" cy="100" r="88" stroke="var(--slate)" stroke-width="2.5"/>
+      <path d="M100 12 C 60 55, 60 145, 100 188" stroke="var(--slate)" stroke-width="1.5" opacity="0.5"/>
+      <path d="M100 12 C 140 55, 140 145, 100 188" stroke="var(--slate)" stroke-width="1.5" opacity="0.5"/>
+      <line x1="12" y1="100" x2="188" y2="100" stroke="var(--slate)" stroke-width="1.5" opacity="0.5"/>
+      <line x1="24" y1="60" x2="176" y2="60" stroke="var(--slate)" stroke-width="1.2" opacity="0.35"/>
+      <line x1="24" y1="140" x2="176" y2="140" stroke="var(--slate)" stroke-width="1.2" opacity="0.35"/>
+      <path d="M100 46 L 148 96 L 118 96 L 118 138 L 82 138 L 82 96 L 52 96 Z" fill="var(--teal)"/>
+      <rect x="62" y="106" width="14" height="14" fill="var(--paper)"/>
+      <line x1="69" y1="106" x2="69" y2="120" stroke="var(--teal-deep)" stroke-width="1.5"/>
+      <line x1="62" y1="113" x2="76" y2="113" stroke="var(--teal-deep)" stroke-width="1.5"/>
+      <rect x="124" y="106" width="14" height="14" fill="var(--paper)"/>
+      <line x1="131" y1="106" x2="131" y2="120" stroke="var(--teal-deep)" stroke-width="1.5"/>
+      <line x1="124" y1="113" x2="138" y2="113" stroke="var(--teal-deep)" stroke-width="1.5"/>
+    </svg>
+    <h1 class="wordmark">Genesis</h1>
+    <div class="company-line">M&amp;L Title and Escrow</div>
+    <p class="hero-caption">Concept lockup carrying the globe-and-roofline motif and navy / slate / teal coloration forward from the reference mark, redrawn for Genesis.</p>
+  </div>
+
+  <section>
+    <div class="section-head">
+      <h2 class="section-title">Core palette</h2>
+      <div class="section-note">Structural &amp; brand color — chrome, text, accents. Not used for status.</div>
+    </div>
+    <div class="swatch-grid">
+      <div class="swatch">
+        <div class="swatch-fill" style="background: var(--navy);"></div>
+        <div class="swatch-body">
+          <div class="swatch-name">Navy</div>
+          <div class="swatch-hex">#12213A</div>
+          <div class="swatch-use">Primary text, toolbars, nav chrome</div>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-fill" style="background: var(--slate);"></div>
+        <div class="swatch-body">
+          <div class="swatch-name">Slate</div>
+          <div class="swatch-hex">#3E5872</div>
+          <div class="swatch-use">Secondary text, borders, structure</div>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-fill" style="background: var(--teal);"></div>
+        <div class="swatch-body">
+          <div class="swatch-name">Teal</div>
+          <div class="swatch-hex">#4FAFA0</div>
+          <div class="swatch-use">Primary actions, links, active states</div>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-fill" style="background: var(--paper); border-bottom: 1px solid var(--line);"></div>
+        <div class="swatch-body">
+          <div class="swatch-name">Paper</div>
+          <div class="swatch-hex">#F4F6F8</div>
+          <div class="swatch-use">Page ground, light mode</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2 class="section-title">Status semantics</h2>
+      <div class="section-note">Deliberately outside the brand palette — need to read instantly across every exception report, hard stop, and status badge.</div>
+    </div>
+    <div class="status-panel">
+      <div class="status-row">
+        <div class="status-card green">
+          <div><span class="status-dot"></span><span class="status-label">Cleared</span></div>
+          <div class="status-example">Title Status: Cleared for Policy</div>
+          <div class="status-hex">#1E8A4C on #E4F5EA</div>
+        </div>
+        <div class="status-card amber">
+          <div><span class="status-dot"></span><span class="status-label">Pending</span></div>
+          <div class="status-example">Escrow Status: Balancing</div>
+          <div class="status-hex">#B4740E on #FBEDD8</div>
+        </div>
+        <div class="status-card red">
+          <div><span class="status-dot"></span><span class="status-label">Blocked</span></div>
+          <div class="status-example">Derivation depth not satisfied</div>
+          <div class="status-hex">#C23A2B on #FBE6E2</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2 class="section-title">Applied</h2>
+      <div class="section-note">A file toolbar, a hard-stop banner, and a primary action together.</div>
+    </div>
+    <div class="mock-window">
+      <div class="mock-toolbar">
+        <div class="mock-toolbar-left">
+          <svg class="mock-mark-small" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="100" cy="100" r="88" stroke="var(--slate-soft)" stroke-width="4" opacity="0.6"/>
+            <path d="M100 46 L 148 96 L 118 96 L 118 138 L 82 138 L 82 96 L 52 96 Z" fill="var(--teal)"/>
+          </svg>
+          <div class="mock-file">Order #24-01187 <span>1421 Cypress Bend Ct.</span></div>
+        </div>
+        <div class="mock-badges">
+          <span class="badge green">TITLE · CLEARED FOR POLICY</span>
+          <span class="badge amber">ESCROW · BALANCING</span>
+        </div>
+      </div>
+      <div class="mock-banner">
+        <span>&#9888;</span>
+        <span><strong>Additional chain of title needed.</strong> This state requires a two-owner derivation before the Commitment can be finalized.</span>
+      </div>
+      <div class="mock-body">
+        <div class="mock-body-text">Schedule A currently shows one prior owner. Add the preceding deed of record to satisfy the derivation requirement.</div>
+        <button class="btn">Generate Commitment</button>
+      </div>
+    </div>
+  </section>
+
+  <footer>Genesis &middot; concept exploration &middot; not final</footer>
+
+</div>
