@@ -1158,6 +1158,7 @@
           page3: {
             dueFromBorrower: [], paidByOrForBorrower: [], dueToSeller: [], dueFromSeller: [],
             payoffsAndPayments: [],
+            fixed: { deposit: "", sellerCredit: "", firstMortgagePayoff: "", secondMortgagePayoff: "" },
             calc: {
               totalClosingCostsLE: "", closingCostsPaidBeforeClosingLE: "",
               closingCostsFinancedLE: "", closingCostsFinancedFinal: "",
@@ -1204,6 +1205,10 @@
     var ecdf = o.escrow.cdf;
     if(ecdf.page1.loanAmount === undefined) ecdf.page1.loanAmount = "";
     if(!ecdf.page3.payoffsAndPayments) ecdf.page3.payoffsAndPayments = [];
+    if(!ecdf.page3.fixed) ecdf.page3.fixed = { deposit: "", sellerCredit: "", firstMortgagePayoff: "", secondMortgagePayoff: "" };
+    (o.escrow.taxProrations || []).concat(o.escrow.otherProrations || []).forEach(function(p){
+      if(p.paidInAdvance === undefined) p.paidInAdvance = false;
+    });
     if(!ecdf.page3.calc){
       ecdf.page3.calc = {
         totalClosingCostsLE: "", closingCostsPaidBeforeClosingLE: "",
@@ -1301,6 +1306,7 @@
           page3: {
             dueFromBorrower: [], paidByOrForBorrower: [], dueToSeller: [], dueFromSeller: [],
             payoffsAndPayments: [],
+            fixed: { deposit: "", sellerCredit: "", firstMortgagePayoff: "", secondMortgagePayoff: "" },
             calc: {
               totalClosingCostsLE: "", closingCostsPaidBeforeClosingLE: "",
               closingCostsFinancedLE: "", closingCostsFinancedFinal: "",
@@ -1785,13 +1791,31 @@
     return state.contactDetailId ? tplContactDetail(o) : tplContactList(o);
   }
 
+  function contactListClause(c, allContacts){
+    // The Contacts list shows one row per contact record, but a married individual's OWN
+    // clause in isolation always reads "a married person" -- that's technically accurate for
+    // that one record, but every generated document (groupVestingClause/marriedPairAmong)
+    // combines a linked married pair into "X and Y, husband and wife" instead. Match that here
+    // so the list preview doesn't read as un-combined when the real documents are combined.
+    if(c.entityType === "Individual" && c.maritalStatus === "Married"){
+      var spouse = null;
+      if(c.marriedToId) spouse = allContacts.filter(function(x){ return x.id === c.marriedToId; })[0];
+      if(!spouse) spouse = allContacts.filter(function(x){ return x.marriedToId === c.id; })[0];
+      if(spouse){
+        var pair = marriedPairAmong([c, spouse]);
+        if(pair) return pair;
+      }
+    }
+    return clauseForContact(c);
+  }
+
   function tplContactList(o){
     var rows = o.contacts.length === 0
       ? '<div class="empty-card">No contacts added yet.</div>'
       : o.contacts.map(function(c){
           var detail;
           if(isVestingRole(c.role)){
-            var clause = clauseForContact(c);
+            var clause = contactListClause(c, o.contacts);
             var preview = clause.length > 64 ? clause.slice(0,64) + "…" : clause;
             detail = esc(c.entityType) + (preview ? ' &middot; ' + esc(preview) : '');
           } else {
@@ -2271,13 +2295,71 @@
     if(!p1.placeOfSettlement && sa && sa.address){ p1.placeOfSettlement = sa.address; changed = true; }
     if(changed) save();
   }
-  function cdfCashToCloseBorrower(o){
+  function cdfProrationFlowItems(o){
+    // Flows Tax and Other Prorations onto Page 3's "Adjustments for Items Paid/Unpaid by Seller"
+    // lines -- verified against the real CFPB CD Page 3 layout. paidInAdvance=true means the
+    // Seller already paid the whole period, so the Buyer's share (buyerAmount) is charged to K
+    // and credited to M. paidInAdvance=false (the far more common arrears case, and this app's
+    // existing default) means the Seller's share (sellerAmount) hasn't been paid yet, so it's
+    // credited to L and charged to N. Computed live from the Tax/Other Prorations screens --
+    // edit the proration itself there, not here.
+    var items = (o.escrow.taxProrations || []).map(function(p){ return { p: p, label: p.type }; })
+      .concat((o.escrow.otherProrations || []).map(function(p){ return { p: p, label: p.description || "Proration" }; }));
+    return items.map(function(x){
+      var split = computeProrationSplit(x.p.annualAmount, x.p.periodStart, x.p.periodEnd, x.p.prorationDate);
+      if(!split) return null;
+      return {
+        label: x.label, periodStart: x.p.periodStart, periodEnd: x.p.periodEnd,
+        paidInAdvance: !!x.p.paidInAdvance, buyerAmount: split.buyerAmount, sellerAmount: split.sellerAmount
+      };
+    }).filter(Boolean);
+  }
+  function cdfProrationTotal(o, side){
+    // side: "k" (charge to Borrower, advance) | "l" (credit to Borrower, arrears) |
+    //       "m" (credit to Seller, advance) | "n" (charge to Seller, arrears)
+    var total = 0;
+    cdfProrationFlowItems(o).forEach(function(it){
+      if((side === "k" || side === "m") && it.paidInAdvance) total += it.buyerAmount;
+      if((side === "l" || side === "n") && !it.paidInAdvance) total += it.sellerAmount;
+    });
+    return total;
+  }
+  // Page 1's salePrice/loanAmount are only backfilled from Order Entry once (at order creation,
+  // via normalizeOrder) or when the user explicitly clicks "Refill CDF1 Parties" -- so they can
+  // go stale the moment someone edits Sale Price/Loan Amount on the Order Entry tab afterward.
+  // K/L/M/N's totals are closing-critical figures, so rather than trusting a possibly-stale Page 1
+  // value, fall back live to Order Entry's own purchasePrice/loanAmount whenever Page 1 hasn't been
+  // explicitly overridden with a different value. An explicit Page 1 entry (e.g. from the Refill
+  // button, or hand-edited to differ from Order Entry for a specific file) still wins.
+  function cdfSalePrice(o){
+    var p1 = o.escrow.cdf.page1;
+    return parseFloat(p1.salePrice) || parseFloat(o.purchasePrice) || 0;
+  }
+  function cdfLoanAmount(o){
+    var p1 = o.escrow.cdf.page1;
+    return parseFloat(p1.loanAmount) || parseFloat(o.loanAmount) || 0;
+  }
+  function cdfKTotal(o){
+    var p2 = o.escrow.cdf.page2, p3 = o.escrow.cdf.page3;
+    return cdfSalePrice(o) + cdfBorrowerAtClosingCostsTotal(p2) + cdfProrationTotal(o, "k") + lineItemTotal(p3.dueFromBorrower, "amount");
+  }
+  function cdfLTotal(o){
+    var p3 = o.escrow.cdf.page3, f = p3.fixed;
+    return (parseFloat(f.deposit) || 0) + cdfLoanAmount(o) + (parseFloat(f.sellerCredit) || 0) + cdfProrationTotal(o, "l") + lineItemTotal(p3.paidByOrForBorrower, "amount");
+  }
+  function cdfMTotal(o){
     var p3 = o.escrow.cdf.page3;
-    return lineItemTotal(p3.dueFromBorrower, "amount") - lineItemTotal(p3.paidByOrForBorrower, "amount");
+    return cdfSalePrice(o) + cdfProrationTotal(o, "m") + lineItemTotal(p3.dueToSeller, "amount");
+  }
+  function cdfNTotal(o){
+    var p2 = o.escrow.cdf.page2, p3 = o.escrow.cdf.page3, f = p3.fixed;
+    return cdfSellerAtClosingCostsTotal(p2) + (parseFloat(f.firstMortgagePayoff) || 0) + (parseFloat(f.secondMortgagePayoff) || 0) + (parseFloat(f.sellerCredit) || 0) + cdfProrationTotal(o, "n") + lineItemTotal(p3.dueFromSeller, "amount");
+  }
+  function cdfCashToCloseBorrower(o){
+    return cdfKTotal(o) - cdfLTotal(o);
   }
   function cdfCashToCloseSeller(o){
-    var p3 = o.escrow.cdf.page3;
-    return lineItemTotal(p3.dueToSeller, "amount") - lineItemTotal(p3.dueFromSeller, "amount");
+    return cdfMTotal(o) - cdfNTotal(o);
   }
   // Refi-mode: driven by CDF Page 1's Loan Purpose (Cam's call -- derive it rather than a separate
   // toggle). Only "Refinance" switches the layout for now; Construction/Home Equity/Other stay on
@@ -4126,6 +4208,15 @@
     CDF_PAGE2_SECTIONS.forEach(function(k){ total += lineItemTotal(p2[k], "borrowerBeforeClosing"); });
     return total;
   }
+  function cdfSellerAtClosingCostsTotal(p2){
+    // Seller's own closing-costs total (purchase mode only -- Page 2's Seller-Paid columns).
+    // Only the At-Closing portion belongs on Page 3's N (Due from Seller) -- Before-Closing seller
+    // costs were already paid and aren't due again at closing, same logic already used for the
+    // refi Cash-to-Close formula.
+    var total = 0;
+    CDF_PAGE2_SECTIONS.forEach(function(k){ total += lineItemTotal(p2[k], "sellerAtClosing"); });
+    return total;
+  }
   function cdfLoanCostsSubtotal(p2){
     return lineItemTotal(p2.sectionA, "borrowerAtClosing") + lineItemTotal(p2.sectionA, "borrowerBeforeClosing") +
       lineItemTotal(p2.sectionB, "borrowerAtClosing") + lineItemTotal(p2.sectionB, "borrowerBeforeClosing") +
@@ -4160,7 +4251,7 @@
 
   var CDF_PAGE3_COLS = [{key:"amount", label:"Amount"}];
   function tplEscrowCdf3(o){
-    var p3 = o.escrow.cdf.page3, p2 = o.escrow.cdf.page2, calc = p3.calc;
+    var p1 = o.escrow.cdf.page1, p3 = o.escrow.cdf.page3, p2 = o.escrow.cdf.page2, calc = p3.calc;
     var refi = cdfIsRefi(o);
     var calcHeader = '<div class="cdform-row header" style="grid-template-columns:2fr 110px 110px"><div></div><div>Loan Estimate</div><div>Final</div></div>';
     var calcRows;
@@ -4193,13 +4284,36 @@
         '<div class="cdform-table">' + tplCdfLineItemTable(p3.payoffsAndPayments, CDF_PAGE3_COLS, "cdf3payoffs", "K. Total Payoffs and Payments") + '</div>' +
       '</div>';
     } else {
-      var borrowerCol = '<div class="cdform-row section-label">K. Due from Borrower at Closing</div>' + tplCdfLineItemTable(p3.dueFromBorrower, CDF_PAGE3_COLS, "cdf3k", "Total (K)") +
-        '<div class="cdform-row section-label">L. Paid Already by or on Behalf of Borrower</div>' + tplCdfLineItemTable(p3.paidByOrForBorrower, CDF_PAGE3_COLS, "cdf3l", "Total (L)") +
+      var f = p3.fixed;
+      var kFixed = cdFixedLine("01", "Sale Price of Property", cdCalcStatic(cdfSalePrice(o))) +
+        cdFixedLine("02", "Closing Costs Paid at Closing (J)", cdCalcStatic(cdfBorrowerAtClosingCostsTotal(p2))) +
+        cdProrationRows(o, "k");
+      var kOther = '<div class="cdform-row section-label" style="font-size:11px">Other Items</div>' + tplCdfLineItemTable(p3.dueFromBorrower, CDF_PAGE3_COLS, "cdf3k", "Other Items Subtotal");
+      var borrowerCol = '<div class="cdform-row section-label">K. Due from Borrower at Closing</div>' + kFixed + kOther +
+        '<div class="cdform-row total" style="grid-template-columns:1fr auto"><div>Total Due from Borrower at Closing (K)</div><div class="cdform-amt-static">' + fmtMoney(cdfKTotal(o)) + '</div></div>' +
+        '<div class="cdform-row section-label">L. Paid Already by or on Behalf of Borrower</div>' +
+        cdFixedLine("01", "Deposit", cdCalcInput("cdf3fixed-deposit", f.deposit)) +
+        cdFixedLine("02", "Loan Amount", cdCalcStatic(cdfLoanAmount(o))) +
+        cdFixedLine("03", "Seller Credit", cdCalcInput("cdf3fixed-sellerCredit", f.sellerCredit)) +
+        cdProrationRows(o, "l") +
+        '<div class="cdform-row section-label" style="font-size:11px">Other Credits</div>' + tplCdfLineItemTable(p3.paidByOrForBorrower, CDF_PAGE3_COLS, "cdf3l", "Other Credits Subtotal") +
+        '<div class="cdform-row total" style="grid-template-columns:1fr auto"><div>Total Paid Already by/on Behalf of Borrower (L)</div><div class="cdform-amt-static">' + fmtMoney(cdfLTotal(o)) + '</div></div>' +
         '<div class="cdform-row total" style="grid-template-columns:1fr auto"><div>Cash to/from Borrower (K &minus; L)</div><div class="cdform-amt-static">' + fmtMoney(cdfCashToCloseBorrower(o)) + '</div></div>';
-      var sellerCol = '<div class="cdform-row section-label">M. Due to Seller at Closing</div>' + tplCdfLineItemTable(p3.dueToSeller, CDF_PAGE3_COLS, "cdf3m", "Total (M)") +
-        '<div class="cdform-row section-label">N. Due from Seller at Closing</div>' + tplCdfLineItemTable(p3.dueFromSeller, CDF_PAGE3_COLS, "cdf3n", "Total (N)") +
+      var mFixed = cdFixedLine("01", "Sale Price of Property", cdCalcStatic(cdfSalePrice(o))) + cdProrationRows(o, "m");
+      var mOther = '<div class="cdform-row section-label" style="font-size:11px">Other Items</div>' + tplCdfLineItemTable(p3.dueToSeller, CDF_PAGE3_COLS, "cdf3m", "Other Items Subtotal");
+      var sellerCol = '<div class="cdform-row section-label">M. Due to Seller at Closing</div>' + mFixed + mOther +
+        '<div class="cdform-row total" style="grid-template-columns:1fr auto"><div>Total Due to Seller at Closing (M)</div><div class="cdform-amt-static">' + fmtMoney(cdfMTotal(o)) + '</div></div>' +
+        '<div class="cdform-row section-label">N. Due from Seller at Closing</div>' +
+        cdFixedLine("01", "Closing Costs Paid at Closing (J)", cdCalcStatic(cdfSellerAtClosingCostsTotal(p2))) +
+        cdFixedLine("02", "Payoff of First Mortgage Loan", cdCalcInput("cdf3fixed-firstMortgagePayoff", f.firstMortgagePayoff)) +
+        cdFixedLine("03", "Payoff of Second Mortgage Loan", cdCalcInput("cdf3fixed-secondMortgagePayoff", f.secondMortgagePayoff)) +
+        cdFixedLine("04", "Seller Credit", cdCalcStatic(f.sellerCredit || 0)) +
+        cdProrationRows(o, "n") +
+        '<div class="cdform-row section-label" style="font-size:11px">Other Items</div>' + tplCdfLineItemTable(p3.dueFromSeller, CDF_PAGE3_COLS, "cdf3n", "Other Items Subtotal") +
+        '<div class="cdform-row total" style="grid-template-columns:1fr auto"><div>Total Due from Seller at Closing (N)</div><div class="cdform-amt-static">' + fmtMoney(cdfNTotal(o)) + '</div></div>' +
         '<div class="cdform-row total" style="grid-template-columns:1fr auto"><div>Cash to/from Seller (M &minus; N)</div><div class="cdform-amt-static">' + fmtMoney(cdfCashToCloseSeller(o)) + '</div></div>';
       summaries = '<div class="cdform-wrap">' + cdBar("Summaries of Transactions") +
+        '<p class="cdform-note">Sale Price and Loan Amount flow from Page 1; Closing Costs (J) flow from Page 2; tax/other proration adjustments flow from the Tax Prorations and Other Prorations screens. Deposit, Seller Credit, and mortgage payoffs are entered here. Anything else file-specific can still be added as a free-text line under “Other Items.”</p>' +
         '<div class="cdform-twocol" style="padding:14px">' +
           '<div><div class="cdform-header-col-title">Borrower\'s Transaction</div><div class="cdform-table" style="padding:0">' + borrowerCol + '</div></div>' +
           '<div><div class="cdform-header-col-title">Seller\'s Transaction</div><div class="cdform-table" style="padding:0">' + sellerCol + '</div></div>' +
@@ -4725,6 +4839,23 @@
   }
   function cdCalcStatic(v){ return '<span class="cdform-amt-static">' + fmtMoney(v) + '</span>'; }
   function cdCalcInput(id, val){ return '<input type="text" id="' + id + '" value="' + esc(val) + '" placeholder="0.00">'; }
+  function cdFixedLine(num, label, valueHtml){
+    return '<div class="cdform-row" style="grid-template-columns:26px 1fr auto"><div class="cdform-num">' + esc(num) + '</div><div class="cdform-label">' + esc(label) + '</div><div class="cdform-amt">' + valueHtml + '</div></div>';
+  }
+  function cdProrationRows(o, side){
+    // side "k"/"m" = Adjustments for Items Paid by Seller in Advance; "l"/"n" = Adjustments for
+    // Items Unpaid by Seller. See cdfProrationFlowItems for the direction logic.
+    var advance = (side === "k" || side === "m");
+    var items = cdfProrationFlowItems(o).filter(function(it){ return it.paidInAdvance === advance; });
+    if(items.length === 0) return "";
+    var heading = advance ? "Adjustments for Items Paid by Seller in Advance" : "Adjustments for Items Unpaid by Seller";
+    var rows = items.map(function(it){
+      var amt = advance ? it.buyerAmount : it.sellerAmount;
+      var range = (it.periodStart && it.periodEnd) ? (' <span style="color:var(--slate-soft);font-weight:400">(' + esc(fmtDate(it.periodStart)) + '&ndash;' + esc(fmtDate(it.periodEnd)) + ')</span>') : '';
+      return '<div class="cdform-row" style="grid-template-columns:26px 1fr auto"><div class="cdform-num"></div><div class="cdform-label">' + esc(it.label) + range + '</div><div class="cdform-amt">' + cdCalcStatic(amt) + '</div></div>';
+    }).join('');
+    return '<div class="cdform-row section-label" style="font-size:11px">' + heading + '</div>' + rows;
+  }
   // Renders a CD-style itemized line-item table: numbered rows, an optional 2-level grouped header
   // (e.g. "Borrower-Paid" spanning At Closing/Before Closing), and a bold lettered subtotal row.
   // Reuses the exact same field-ID scheme as tplLineItemTable/wireLineItemTable (prefix-key-id,
@@ -4812,7 +4943,10 @@
             '<div class="field"><label>Proration Date</label><input type="date" id="' + prefix + '-prdate-' + p.id + '" value="' + esc(p.prorationDate) + '"></div>' +
           '</div>' +
           '<p class="field-hint" style="margin-top:8px;margin-bottom:0">' + splitText + '</p>' +
-          '<button class="icon-btn" data-del-proration="' + prefix + ':' + p.id + '" title="Remove" style="margin-top:6px">' + trashIcon() + '</button>' +
+          '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px">' +
+            '<label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--slate)"><input type="checkbox" id="' + prefix + '-advance-' + p.id + '"' + (p.paidInAdvance?' checked':'') + '> Paid in advance by Seller (unchecked = unpaid/arrears, the more common case)</label>' +
+            '<button class="icon-btn" data-del-proration="' + prefix + ':' + p.id + '" title="Remove">' + trashIcon() + '</button>' +
+          '</div>' +
         '</div>';
       }).join("");
     return rows;
@@ -4827,6 +4961,8 @@
       bindDate("periodStart", prefix + "-start-" + p.id);
       bindDate("periodEnd", prefix + "-end-" + p.id);
       bindDate("prorationDate", prefix + "-prdate-" + p.id);
+      var advanceEl = document.getElementById(prefix + "-advance-" + p.id);
+      if(advanceEl) advanceEl.addEventListener("change", function(){ p.paidInAdvance = advanceEl.checked; save(); renderTabPanel(); });
       if(hasType){
         var typeEl = document.getElementById(prefix + "-type-" + p.id);
         if(typeEl) typeEl.addEventListener("change", function(){ p.type = typeEl.value; save(); renderTabPanel(); });
@@ -7126,12 +7262,12 @@
     wireProrationRows(o.escrow.otherProrations, "otp", false);
     var btnAddTaxProration = document.getElementById("btn-add-tax-proration");
     if(btnAddTaxProration) btnAddTaxProration.addEventListener("click", function(){
-      o.escrow.taxProrations.push({ id: uid(), type: TAX_PRORATION_TYPES[0], annualAmount: "", periodStart: "", periodEnd: "", prorationDate: "" });
+      o.escrow.taxProrations.push({ id: uid(), type: TAX_PRORATION_TYPES[0], annualAmount: "", periodStart: "", periodEnd: "", prorationDate: "", paidInAdvance: false });
       save(); renderTabPanel();
     });
     var btnAddOtherProration = document.getElementById("btn-add-other-proration");
     if(btnAddOtherProration) btnAddOtherProration.addEventListener("click", function(){
-      o.escrow.otherProrations.push({ id: uid(), description: "", annualAmount: "", periodStart: "", periodEnd: "", prorationDate: "" });
+      o.escrow.otherProrations.push({ id: uid(), description: "", annualAmount: "", periodStart: "", periodEnd: "", prorationDate: "", paidInAdvance: false });
       save(); renderTabPanel();
     });
 
@@ -7185,6 +7321,13 @@
       wireLineItemTable(o.escrow.cdf.page3.paidByOrForBorrower, "cdf3l", CDF_PAGE3_COLS);
       wireLineItemTable(o.escrow.cdf.page3.dueToSeller, "cdf3m", CDF_PAGE3_COLS);
       wireLineItemTable(o.escrow.cdf.page3.dueFromSeller, "cdf3n", CDF_PAGE3_COLS);
+      // K/L/M/N's fixed lines (Deposit, Seller Credit, mortgage payoffs) live-refresh on change,
+      // like the free-text line items above, so the K/L/M/N/Cash-to-Close totals right below stay
+      // in sync immediately instead of waiting for the next full re-render (unlike plain bindText).
+      ["deposit","sellerCredit","firstMortgagePayoff","secondMortgagePayoff"].forEach(function(fld){
+        var el = document.getElementById("cdf3fixed-" + fld);
+        if(el) el.addEventListener("change", function(){ o.escrow.cdf.page3.fixed[fld] = el.value; save(); renderTabPanel(); });
+      });
     }
     ["totalClosingCostsLE","closingCostsPaidBeforeClosingLE","closingCostsFinancedLE","closingCostsFinancedFinal",
      "downPaymentLE","downPaymentFinal","depositLE","depositFinal","fundsForBorrowerLE","fundsForBorrowerFinal",
