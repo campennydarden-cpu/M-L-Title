@@ -18,7 +18,7 @@ const { chromium } = require('playwright');
 
   // ---------- Test A: save() failure surfaces a visible, non-silent error banner ----------
   await page.goto(APP);
-  await page.evaluate(() => localStorage.clear());
+  await page.evaluate(() => { localStorage.clear(); localStorage.setItem('genesis_demo_seeded_v1', '1'); });
   await page.reload();
   await page.waitForTimeout(200);
 
@@ -104,7 +104,7 @@ const { chromium } = require('playwright');
 
   // ---------- Test D: restore-from-backup upserts by id, never deletes ----------
   // Reset to a clean, valid state with one known order.
-  await page.evaluate((k) => { localStorage.clear(); }, STORAGE_KEY);
+  await page.evaluate((k) => { localStorage.clear(); localStorage.setItem('genesis_demo_seeded_v1', '1'); }, STORAGE_KEY);
   await page.reload();
   await page.waitForTimeout(200);
   await page.click('#btn-new-order');

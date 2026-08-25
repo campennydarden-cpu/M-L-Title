@@ -1,4 +1,4 @@
-<title>Genesis Commitment Builder</title>
+<title>Genesis — M&amp;L Title &amp; Escrow</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -1298,6 +1298,7 @@
       return;
     }
     state.orders.forEach(normalizeOrder);
+    seedDemoOrderIfFirstEverLoad();
     save();
   }
   function save(){
@@ -1570,6 +1571,146 @@
     state.currentTab = "entry";
     save();
     render();
+  }
+
+  // ---------------- Seeded demo order ----------------
+  // Per the 2026-08-25 audit's Outsider finding: a brand-new browser profile shows an empty order
+  // list with no way to see the app's actual depth (Commitment, Curative, Doc Prep, CDF) without
+  // building a full file by hand first. This seeds one realistic-but-fictional demo file, once,
+  // on a truly first-ever load -- guarded by its own localStorage flag (separate from the orders
+  // array itself) so it never reappears after a real user deletes it or clears their own orders.
+  // No SSN/DOB is set on any demo contact, deliberately, even though those fields exist on real
+  // contacts -- there's no reason for fabricated PII-shaped values to exist even in a demo.
+  var DEMO_SEEDED_KEY = "genesis_demo_seeded_v1";
+  function buildDemoOrder(){
+    var o = blankOrder();
+    o.fileNo = "GEN-DEMO-1001";
+    o.titleStatus = "Cleared for Policy";
+    o.orderStatus = "In Progress";
+    o.escrowStatus = "In Progress";
+    o.transactionType = "Purchase";
+    o.productType = "Purchase";
+    o.policyType = "Simultaneous";
+    o.propertyAddress = "482 Wrenwood Lane";
+    o.city = "Asheville"; o.county = "Buncombe"; o.stateCode = "NC"; o.zip = "28806";
+    o.parcelNumber = "9647-12-3456";
+    o.purchasePrice = "415000"; o.loanAmount = "332000";
+    o.settlementDate = new Date(Date.now() + 21*86400000).toISOString().slice(0,10);
+    o.settlementTime = "10:00 AM";
+    o.orderReceivedDate = new Date().toISOString().slice(0,10);
+
+    var buyer1Id = uid(), buyer2Id = uid(), sellerId = uid(), lenderId = uid(), saId = uid();
+    o.contacts = [
+      { id: buyer1Id, role: "Buyer/Borrower", name: "Daniel R. Whitfield", phone: "(828) 555-0142", email: "daniel.whitfield@example.com",
+        entityType: "Individual", currentAddress: "118 Cedar Hollow Rd, Asheville, NC 28801", mailingAddress: "118 Cedar Hollow Rd, Asheville, NC 28801", forwardingAddress: "482 Wrenwood Lane, Asheville, NC 28806",
+        maritalStatus: "Married", marriedToId: buyer2Id, poaEnabled: false, poaAttorneyInFactName: "", poaInstrumentRef: "",
+        ssn: "", dob: "", signatureLines: [{ id: uid(), text: "Daniel R. Whitfield" }] },
+      { id: buyer2Id, role: "Buyer/Borrower", name: "Priya S. Whitfield", phone: "(828) 555-0143", email: "priya.whitfield@example.com",
+        entityType: "Individual", currentAddress: "118 Cedar Hollow Rd, Asheville, NC 28801", mailingAddress: "118 Cedar Hollow Rd, Asheville, NC 28801", forwardingAddress: "482 Wrenwood Lane, Asheville, NC 28806",
+        maritalStatus: "Married", marriedToId: buyer1Id, poaEnabled: false, poaAttorneyInFactName: "", poaInstrumentRef: "",
+        ssn: "", dob: "", signatureLines: [{ id: uid(), text: "Priya S. Whitfield" }] },
+      { id: sellerId, role: "Seller", name: "Marlene T. Cassidy", phone: "(828) 555-0198", email: "marlene.cassidy@example.com",
+        entityType: "Individual", currentAddress: "482 Wrenwood Lane, Asheville, NC 28806", mailingAddress: "482 Wrenwood Lane, Asheville, NC 28806", forwardingAddress: "290 Sunset Ridge Dr, Hendersonville, NC 28792",
+        maritalStatus: "Widowed", marriedToId: "", poaEnabled: false, poaAttorneyInFactName: "", poaInstrumentRef: "",
+        ssn: "", dob: "", signatureLines: [{ id: uid(), text: "Marlene T. Cassidy" }] },
+      { id: lenderId, role: "Lender", name: "Blue Ridge Community Bank", phone: "(800) 555-0177", email: "closing@example-lender.com",
+        address: "700 Corporate Center Dr, Suite 400, Charlotte, NC 28226", mortgageeClause: "Blue Ridge Community Bank, its successors and/or assigns, ISAOA/ATIMA, PO Box 4410, Charlotte, NC 28204" },
+      { id: saId, role: "Settlement Agent", name: "M&L Title & Escrow", phone: "(828) 555-0100", email: "closings@mltitle.example.com",
+        address: "215 Patton Ave, Suite 300, Asheville, NC 28801", licenseNumber: "NC-TIA-88421", altaId: "1002983" }
+    ];
+    o.vesting.buyerTenancy = "Tenants by the Entirety";
+    o.vesting.sellerTenancy = "Sole Ownership";
+
+    o.property.houseNumber = "482"; o.property.streetName = "Wrenwood"; o.property.streetSuffix = "Lane"; o.property.directional = "";
+    o.property.city = "Asheville"; o.property.county = "Buncombe"; o.property.stateCode = "NC"; o.property.zip = "28806";
+    o.property.useType = "Residential"; o.property.parcelNumber = "9647-12-3456";
+    o.property.briefLegal = "Lot 14, Wrenwood Estates, Section 2, as recorded in Plat Book 62, Page 91";
+    o.property.legalDescription = "Being all of Lot 14, Wrenwood Estates, Section 2, a subdivision as shown on plat recorded in Plat Book 62, Page 91, Buncombe County Registry, reference to which is hereby made for a more particular description.";
+
+    o.prelim.effectiveDate = new Date(Date.now() - 5*86400000).toISOString().slice(0,10);
+    o.prelim.searchType = "Full Search"; o.prelim.searchFromDate = "1998-03-01"; o.prelim.searchToDate = o.prelim.effectiveDate;
+    o.prelim.derivation = { datedDate: "2011-06-14", recordedDate: "2011-06-20", book: "4821", page: "0337", instrumentNumber: "2011-014822",
+      consideration: "228500", name: "Marlene T. Cassidy", entityType: "Individual", grantorName: "Harold J. Cassidy and Marlene T. Cassidy", grantorEntityType: "Individual",
+      instrumentType: "Warranty Deed", isPortion: false };
+    var existingSiId = uid();
+    o.prelim.securityInstruments = [{
+      id: existingSiId, instrumentType: "Deed of Trust", datedDate: "2011-06-14", recordedDate: "2011-06-20",
+      mortgagor: "Harold J. Cassidy and Marlene T. Cassidy", mortgagee: "Carolina First Mortgage, its successors and/or assigns", trustee: "Piedmont Trustee Services, Inc.",
+      consideration: "182800", book: "4821", page: "0341", instrumentNumber: "2011-014823", related: []
+    }];
+    o.prelim.exceptionMatters = [{ id: uid(), description: "Utility easement in favor of Duke Energy Progress recorded in Book 3190, Page 55",
+      datedDate: "1994-02-11", recordedDate: "1994-02-18", book: "3190", page: "0055", instrumentNumber: "" }];
+
+    o.commitment.formType = "Standard";
+    o.commitment.commitmentNumber = "GEN-DEMO-1001-C1";
+    o.commitment.companyStateOfOrg = "North Carolina";
+    o.commitment.requirementsTimePeriod = "30 days";
+    o.commitment.issuingAgent = "M&L Title & Escrow";
+    o.commitment.issuingOffice = "Asheville, NC";
+    o.commitment.scheduleA.dateIssued = o.prelim.effectiveDate;
+    o.commitment.scheduleA.titleHeldAs = "Fee Simple";
+    o.commitment.scheduleA.ownerPolicy = { policyType: "ALTA Owner's Policy", proposedInsured: "Daniel R. Whitfield and Priya S. Whitfield, as tenants by the entirety", coverageAmount: "415000" };
+    o.commitment.scheduleA.loanPolicy = { policyType: "ALTA Loan Policy", proposedInsured: "Blue Ridge Community Bank, its successors and/or assigns, ISAOA/ATIMA", mortgageeClause: "Blue Ridge Community Bank, its successors and/or assigns, ISAOA/ATIMA, PO Box 4410, Charlotte, NC 28204", coverageAmount: "332000" };
+    o.commitment.chainOfTitle = [{ id: uid(), instrumentType: "Warranty Deed", grantor: "Harold J. Cassidy and Marlene T. Cassidy", grantee: "Marlene T. Cassidy",
+      datedDate: "2011-06-14", recordedDate: "2011-06-20", book: "4821", page: "0337", instrumentNumber: "2011-014822" }];
+    var reqSiId = uid();
+    o.commitment.requirements = [
+      { id: reqSiId, description: "Release of Deed of Trust from Harold J. Cassidy and Marlene T. Cassidy to Piedmont Trustee Services, Inc., Trustee for Carolina First Mortgage, dated 06/14/2011, recorded in Book 4821, Page 0341, must be obtained and recorded.",
+        notes: "Payoff requested 3 days ago, statement received.", sourceType: "si", sourceId: existingSiId, disposition: "Payoff Obtained", dispositionNotes: "Payoff good through settlement date + 10 days.", dontShow: false, parentReqId: null },
+      { id: uid(), description: "Warranty Deed from Marlene T. Cassidy to Daniel R. Whitfield and Priya S. Whitfield must be executed, delivered, and recorded.",
+        notes: "", sourceType: null, sourceId: null, disposition: "Satisfied", dispositionNotes: "Executed at closing, sent for recording.", dontShow: false, parentReqId: null },
+      { id: uid(), description: "Satisfactory evidence that taxes for the current year have been prorated between Buyer and Seller.",
+        notes: "", sourceType: null, sourceId: null, disposition: "Satisfied", dispositionNotes: "", dontShow: false, parentReqId: null }
+    ];
+    o.commitment.exceptions = [
+      { id: uid(), description: "Utility easement in favor of Duke Energy Progress recorded in Book 3190, Page 55", notes: "", sourceType: "em", sourceId: o.prelim.exceptionMatters[0].id, disposition: "", dispositionNotes: "", dontShow: false }
+    ];
+    o.commitment.generated = true; o.commitment.generatedAt = o.prelim.effectiveDate + "T09:00:00.000Z";
+    o.commitment.final = true; o.commitment.finalizedAt = o.prelim.effectiveDate + "T09:15:00.000Z";
+    o.commitment.ctcIssued = true; o.commitment.ctcIssuedAt = new Date(Date.now() - 1*86400000).toISOString();
+
+    o.docPrep.deed.instrumentType = "Warranty Deed";
+    o.docPrep.deed.consideration = o.purchasePrice;
+    o.docPrep.deed.datedDate = o.settlementDate;
+    o.docPrep.deed.preparedById = saId; o.docPrep.deed.returnToId = lenderId;
+    o.docPrep.deed.grantorName = "Marlene T. Cassidy"; o.docPrep.deed.grantorEntityType = "Individual";
+    o.docPrep.deed.granteeName = "Daniel R. Whitfield and Priya S. Whitfield"; o.docPrep.deed.granteeEntityType = "Individual";
+    o.docPrep.deed.legalText = o.property.legalDescription;
+    o.docPrep.deed.parcelNumber = o.property.parcelNumber;
+    o.docPrep.deed.situsAddress = o.propertyAddress + ", " + o.property.city + ", " + o.property.stateCode + " " + o.property.zip;
+    o.docPrep.deed.signatureLines = [{ id: uid(), text: "Marlene T. Cassidy" }];
+
+    o.escrow.settlementType = "CDF";
+    o.escrow.cdf.page1.dateIssued = o.prelim.effectiveDate;
+    o.escrow.cdf.page1.closingDate = o.settlementDate;
+    o.escrow.cdf.page1.disbursementDate = o.settlementDate;
+    o.escrow.cdf.page1.salePrice = o.purchasePrice; o.escrow.cdf.page1.loanAmount = o.loanAmount;
+    o.escrow.cdf.page1.loanTerm = "30 years"; o.escrow.cdf.page1.loanPurpose = "Purchase"; o.escrow.cdf.page1.loanProduct = "Fixed Rate"; o.escrow.cdf.page1.loanType = "Conventional";
+    o.escrow.cdf.page1.interestRate = "6.375%";
+    o.escrow.cdf.page1.borrowerNames = "Daniel R. Whitfield and Priya S. Whitfield";
+    o.escrow.cdf.page1.sellerNames = "Marlene T. Cassidy";
+    o.escrow.cdf.page1.lenderName = "Blue Ridge Community Bank";
+
+    o.requestedTasks = [{ id: uid(), description: "Payoff Statement", status: "Received", requestedDate: o.prelim.effectiveDate, requestedDueDate: "", dueDate: "", receivedDate: new Date(Date.now() - 2*86400000).toISOString().slice(0,10), notes: "Carolina First Mortgage — good through settlement + 10 days." }];
+    o.checklistTasks = [
+      { id: uid(), description: "Order Payoff", milestone: "Curative", dueDate: "", status: "Completed", completedDate: new Date(Date.now() - 3*86400000).toISOString().slice(0,10) },
+      { id: uid(), description: "Schedule Closing Appointment", milestone: "Closing", dueDate: o.settlementDate, status: "In Progress", completedDate: "" }
+    ];
+
+    logHistoryEvent(o, "Order Entry", "milestone", "File Created");
+    logHistoryEvent(o, "Commitment", "milestone", "Commitment Generated");
+    logHistoryEvent(o, "Commitment", "milestone", "Commitment Finalized");
+    logHistoryEvent(o, "Curative", "milestone", "Clear to Close Issued");
+    return o;
+  }
+  function seedDemoOrderIfFirstEverLoad(){
+    var already = false;
+    try{ already = !!localStorage.getItem(DEMO_SEEDED_KEY); }catch(e){ return; }
+    if(already || state.orders.length > 0) return;
+    try{
+      state.orders.push(buildDemoOrder());
+      localStorage.setItem(DEMO_SEEDED_KEY, "1");
+    }catch(e){ /* best-effort only -- a failed seed should never block normal app startup */ }
   }
 
   function cloneContactsForLink(parentContacts){

@@ -30,7 +30,7 @@ const { chromium } = require('playwright');
   }
 
   await page.goto(APP);
-  await page.evaluate(() => localStorage.clear());
+  await page.evaluate(() => { localStorage.clear(); localStorage.setItem('genesis_demo_seeded_v1', '1'); });
   await page.reload();
   await page.waitForTimeout(200);
   await page.click('#btn-new-order');

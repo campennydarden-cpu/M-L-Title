@@ -1,0 +1,68 @@
+const { chromium } = require('playwright');
+
+// Covers the 2026-08-25 seeded-demo-order fix (Option 3, Outsider finding #3): a truly first-ever
+// browser profile (empty localStorage, never seeded before) should get one realistic demo file so a
+// cold viewer sees the app's actual depth instead of an empty shell -- and it should never reappear
+// once dismissed/deleted, and never touch a profile that already has real orders.
+
+(async () => {
+  const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const page = await browser.newPage();
+  const errors = [];
+  page.on('pageerror', err => errors.push(err.message));
+
+  const APP = 'file:///home/claude/title-escrow-project/genesis-app.html';
+  const STORAGE_KEY = 'genesis_orders_v1';
+  const DEMO_KEY = 'genesis_demo_seeded_v1';
+
+  function log(question, val) { console.log(question, val); }
+
+  // ---------- Test A: a truly first-ever load seeds exactly one demo order ----------
+  await page.goto(APP);
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await page.waitForTimeout(250);
+
+  const ordersAfterFirstLoad = await page.evaluate((k) => JSON.parse(localStorage.getItem(k) || '[]'), STORAGE_KEY);
+  log('First-ever load seeds exactly one order?', ordersAfterFirstLoad.length === 1);
+  log('Seeded order has the demo file number?', ordersAfterFirstLoad[0] && ordersAfterFirstLoad[0].fileNo === 'GEN-DEMO-1001');
+  log('Seeded order has 5 contacts (2 buyers, seller, lender, settlement agent)?', ordersAfterFirstLoad[0] && ordersAfterFirstLoad[0].contacts.length === 5);
+  log('Seeded order has no SSN/DOB on any contact?', ordersAfterFirstLoad[0] && ordersAfterFirstLoad[0].contacts.every(c => !c.ssn && !c.dob));
+  log('Seeded order has a generated + finalized Commitment with Clear to Close issued?', ordersAfterFirstLoad[0] && ordersAfterFirstLoad[0].commitment.generated && ordersAfterFirstLoad[0].commitment.final && ordersAfterFirstLoad[0].commitment.ctcIssued);
+  const demoFlagSet = await page.evaluate((k) => localStorage.getItem(k), DEMO_KEY);
+  log('Demo-seeded flag was set?', demoFlagSet === '1');
+
+  // Sidebar should show the seeded order.
+  const sidebarShowsDemo = await page.$eval('.order-list', el => el.textContent.indexOf('GEN-DEMO-1001') !== -1).catch(() => false);
+  log('Sidebar shows the seeded demo file?', sidebarShowsDemo);
+
+  // ---------- Test B: deleting the demo order and reloading does NOT re-seed it ----------
+  await page.evaluate((k) => {
+    var orders = JSON.parse(localStorage.getItem(k) || '[]');
+    localStorage.setItem(k, JSON.stringify(orders.filter(o => o.fileNo !== 'GEN-DEMO-1001')));
+  }, STORAGE_KEY);
+  await page.reload();
+  await page.waitForTimeout(200);
+  const ordersAfterDeleteAndReload = await page.evaluate((k) => JSON.parse(localStorage.getItem(k) || '[]'), STORAGE_KEY);
+  log('Demo order does not reappear after being deleted + reloaded?', ordersAfterDeleteAndReload.length === 0);
+
+  // ---------- Test C: a profile that already has real orders (never demo-seeded) is left alone ----------
+  // Simulates a user whose data predates this feature: real order data already sitting in
+  // localStorage, but the demo-seeded flag was never set (since it didn't exist yet when they
+  // started). Written directly rather than via the UI, since going through a real page load on
+  // cleared storage would itself trigger the "first-ever load" seed before a real order could be added.
+  await page.evaluate((k) => {
+    localStorage.clear();
+    localStorage.setItem(k, JSON.stringify([{ id: 'pre-existing-1', fileNo: 'GEN-1001', propertyAddress: 'Real User Order, Not A Demo' }]));
+  }, STORAGE_KEY);
+  await page.reload();
+  await page.waitForTimeout(200);
+  const ordersWithRealData = await page.evaluate((k) => JSON.parse(localStorage.getItem(k) || '[]'), STORAGE_KEY);
+  log('A profile with pre-existing real orders (no demo flag set) never gets a demo order added alongside it?', ordersWithRealData.length === 1 && ordersWithRealData[0].propertyAddress === 'Real User Order, Not A Demo');
+
+  await browser.close();
+
+  if (errors.length) {
+    console.log('PAGE ERRORS:', errors);
+  }
+})();
