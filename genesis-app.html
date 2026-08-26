@@ -1242,7 +1242,7 @@
       o.escrow = {
         settlementType: "",
         options: { cdfVersion: "", hudVersion: "", signatureLinePlacement: "", notes: "" },
-        charges: [], taxProrations: [], otherProrations: [],
+        charges: [], taxProrations: [], otherProrations: [], payoffs: [],
         recording: { documents: [], transferTaxes: [], stampTaxes: [] },
         cdf: {
           page1: {
@@ -1253,7 +1253,13 @@
             projectedPaymentsPeriod1Label: "", projectedPaymentsExtra: [],
             borrowerNames: "", sellerNames: "", lenderName: ""
           },
-          page2: { sectionA: [], sectionB: [], sectionC: [], sectionE: [], sectionF: [], sectionG: [], sectionH: [] },
+          page2: {
+            sectionA: [], sectionB: [], sectionC: [], sectionE: [], sectionF: [], sectionG: [], sectionH: [],
+            sectionAFixed: { pointsPercent: "" },
+            sectionFFixed: { perDiemRate: "", perDiemDays: "" },
+            sectionGFixed: { aggregateAdjustment: "" },
+            lenderCredits: ""
+          },
           page3: {
             dueFromBorrower: [], paidByOrForBorrower: [], dueToSeller: [], dueFromSeller: [],
             payoffsAndPayments: [],
@@ -1332,6 +1338,20 @@
         if(it.sellerBeforeClosing === undefined) it.sellerBeforeClosing = "";
       });
     });
+    // Section A Points / Section F Prepaid Interest / Section G Aggregate Adjustment / Section J
+    // Lender Credits (2026-08-26) -- backfill for orders saved before this pass.
+    if(!ecdf.page2.sectionAFixed) ecdf.page2.sectionAFixed = { pointsPercent: "" };
+    if(!ecdf.page2.sectionFFixed) ecdf.page2.sectionFFixed = { perDiemRate: "", perDiemDays: "" };
+    if(!ecdf.page2.sectionGFixed) ecdf.page2.sectionGFixed = { aggregateAdjustment: "" };
+    if(ecdf.page2.lenderCredits === undefined) ecdf.page2.lenderCredits = "";
+    // Section G rows gain Per Month / # Months inputs that compute Borrower At Closing live --
+    // existing rows (plain $ entries) are left as-is, just backfilled with blank calc fields.
+    (ecdf.page2.sectionG || []).forEach(function(it){
+      if(it.perMonth === undefined) it.perMonth = "";
+      if(it.numMonths === undefined) it.numMonths = "";
+    });
+    // Payoff Calculator (2026-08-26) -- new standalone screen, backfill for orders saved before it existed.
+    if(!o.escrow.payoffs) o.escrow.payoffs = [];
     // Title Insurance Premiums + Endorsements (2026-08-26) -- backfill for orders saved before this pass.
     if(!o.titlePremiums) o.titlePremiums = {
       state: "", underwriterName: "", rateManualReference: "", rateCalculatorUrl: "",
@@ -1684,7 +1704,7 @@
       escrow: {
         settlementType: "",
         options: { cdfVersion: "", hudVersion: "", signatureLinePlacement: "", notes: "" },
-        charges: [], taxProrations: [], otherProrations: [],
+        charges: [], taxProrations: [], otherProrations: [], payoffs: [],
         recording: { documents: [], transferTaxes: [], stampTaxes: [] },
         cdf: {
           page1: {
@@ -1695,7 +1715,13 @@
             projectedPaymentsPeriod1Label: "", projectedPaymentsExtra: [],
             borrowerNames: "", sellerNames: "", lenderName: ""
           },
-          page2: { sectionA: [], sectionB: [], sectionC: [], sectionE: [], sectionF: [], sectionG: [], sectionH: [] },
+          page2: {
+            sectionA: [], sectionB: [], sectionC: [], sectionE: [], sectionF: [], sectionG: [], sectionH: [],
+            sectionAFixed: { pointsPercent: "" },
+            sectionFFixed: { perDiemRate: "", perDiemDays: "" },
+            sectionGFixed: { aggregateAdjustment: "" },
+            lenderCredits: ""
+          },
           page3: {
             dueFromBorrower: [], paidByOrForBorrower: [], dueToSeller: [], dueFromSeller: [],
             payoffsAndPayments: [],
@@ -2003,6 +2029,7 @@
     {k:"escrowCharges", label:"Additional Title/Escrow Charges", group:"Escrow / Closing"},
     {k:"escrowTaxProrations", label:"Tax Prorations", group:"Escrow / Closing"},
     {k:"escrowOtherProrations", label:"Other Prorations", group:"Escrow / Closing"},
+    {k:"escrowPayoffs", label:"Payoff Calculations", group:"Escrow / Closing"},
     {k:"escrowRecording", label:"Recording", group:"Escrow / Closing"},
     {k:"escrowCdf1", label:"CDF Page 1", group:"Escrow / Closing", family:"cdf"},
     {k:"escrowCdf2", label:"CDF Page 2", group:"Escrow / Closing", family:"cdf"},
@@ -2167,6 +2194,7 @@
       else if(state.currentTab === "escrowCharges") html = tplEscrowCharges(o);
       else if(state.currentTab === "escrowTaxProrations") html = tplEscrowTaxProrations(o);
       else if(state.currentTab === "escrowOtherProrations") html = tplEscrowOtherProrations(o);
+      else if(state.currentTab === "escrowPayoffs") html = tplEscrowPayoffs(o);
       else if(state.currentTab === "escrowRecording") html = tplEscrowRecording(o);
       else if(state.currentTab === "escrowCdf1"){ autoFillEscrowCdf1(o); html = tplEscrowCdf1(o); }
       else if(state.currentTab === "escrowCdf2") html = tplEscrowCdf2(o);
@@ -2805,9 +2833,16 @@
     var names = o.contacts.filter(function(c){ return c.role === role; }).map(function(c){ return c.name; }).filter(Boolean);
     return names.join(" and ");
   }
+  // Transaction Type (Order Entry) -> CD Page 1 Purpose. Only the values both fields share map
+  // directly; "Equity" (Order Entry) has no exact match in LOAN_PURPOSE_TYPES so it's left for staff
+  // to set explicitly on Page 1 rather than guessed at.
+  var TRANSACTION_TYPE_TO_LOAN_PURPOSE = { "Purchase": "Purchase", "Refinance": "Refinance", "Other": "Other" };
   function autoFillEscrowCdf1(o){
     var p1 = o.escrow.cdf.page1;
     var changed = false;
+    if(!p1.loanPurpose && TRANSACTION_TYPE_TO_LOAN_PURPOSE[o.transactionType]){
+      p1.loanPurpose = TRANSACTION_TYPE_TO_LOAN_PURPOSE[o.transactionType]; changed = true;
+    }
     if(!p1.salePrice && o.purchasePrice){ p1.salePrice = o.purchasePrice; changed = true; }
     if(!p1.loanAmount && o.loanAmount){ p1.loanAmount = o.loanAmount; changed = true; }
     if(!p1.closingDate && o.settlementDate){ p1.closingDate = o.settlementDate; changed = true; }
@@ -2897,8 +2932,8 @@
     return parseFloat(p1.loanAmount) || parseFloat(o.loanAmount) || 0;
   }
   function cdfKTotal(o){
-    var p2 = o.escrow.cdf.page2, p3 = o.escrow.cdf.page3;
-    return cdfSalePrice(o) + cdfBorrowerAtClosingCostsTotal(p2) + cdfProrationTotal(o, "k") + lineItemTotal(p3.dueFromBorrower, "amount");
+    var p3 = o.escrow.cdf.page3;
+    return cdfSalePrice(o) + cdfBorrowerAtClosingCostsTotal(o) + cdfProrationTotal(o, "k") + lineItemTotal(p3.dueFromBorrower, "amount");
   }
   function cdfLTotal(o){
     var p3 = o.escrow.cdf.page3, f = p3.fixed;
@@ -2918,18 +2953,40 @@
   function cdfCashToCloseSeller(o){
     return cdfMTotal(o) - cdfNTotal(o);
   }
-  // Refi-mode: driven by CDF Page 1's Loan Purpose (Cam's call -- derive it rather than a separate
-  // toggle). Only "Refinance" switches the layout for now; Construction/Home Equity/Other stay on
-  // the purchase-style layout until Cam flags a need to branch those too.
-  function cdfIsRefi(o){ return o.escrow.cdf.page1.loanPurpose === "Refinance"; }
+  // Refi-mode: driven by Order Entry's Transaction Type (the authoritative field) OR CDF Page 1's
+  // own Purpose dropdown -- either one saying "Refinance" switches the layout, so a file doesn't
+  // silently stay on the purchase-style CD/HUD layout just because Page 1's Purpose was never
+  // touched. Page 1's Purpose auto-fills from Transaction Type (see autoFillEscrowCdf1) so the two
+  // stay in sync by default; an explicit Page 1 override still works via the OR. Only "Refinance"
+  // switches the layout for now; Construction/Home Equity/Other/Equity stay on the purchase-style
+  // layout until Cam flags a need to branch those too.
+  function cdfIsRefi(o){ return o.transactionType === "Refinance" || o.escrow.cdf.page1.loanPurpose === "Refinance"; }
+  // Section A Points -- % of Loan Amount, computed off CD Page 1's Loan Amount (falls back to Order
+  // Entry's Loan Amount the same way cdfLoanAmount() does, so Points still computes before Page 1 is touched).
+  function cdfPointsAmount(o){
+    var pct = parseFloat(o.escrow.cdf.page2.sectionAFixed.pointsPercent);
+    if(isNaN(pct)) return 0;
+    return cdfLoanAmount(o) * pct / 100;
+  }
+  // Section F Prepaid Interest -- Per Diem Rate x Number of Days. Per diem defaults from Loan
+  // Amount x Interest Rate / 360 (see autoFillEscrowCdf1's fill-once), fully editable afterward.
+  function cdfPrepaidInterestAmount(o){
+    var f = o.escrow.cdf.page2.sectionFFixed;
+    var rate = parseFloat(f.perDiemRate) || 0, days = parseFloat(f.perDiemDays) || 0;
+    return rate * days;
+  }
+  // Section G Aggregate Adjustment -- a single line under the escrow reserves table, can be negative.
+  function cdfAggregateAdjustmentAmount(o){
+    return parseFloat(o.escrow.cdf.page2.sectionGFixed.aggregateAdjustment) || 0;
+  }
   function cdfPayoffsTotal(p3){ return lineItemTotal(p3.payoffsAndPayments, "amount"); }
   // Cash to Close (refi, Final): matches the real form's math -- Loan Amount minus the AT-CLOSING
   // portion of Total Closing Costs (Before-Closing costs were already paid, not due again) minus
   // Total Payoffs and Payments.
   function cdfCashToCloseRefiFinal(o){
-    var p1 = o.escrow.cdf.page1, p2 = o.escrow.cdf.page2, p3 = o.escrow.cdf.page3;
+    var p1 = o.escrow.cdf.page1, p3 = o.escrow.cdf.page3;
     var loanAmt = parseFloat(p1.loanAmount) || 0;
-    return loanAmt - cdfBorrowerAtClosingCostsTotal(p2) - cdfPayoffsTotal(p3);
+    return loanAmt - cdfBorrowerAtClosingCostsTotal(o) - cdfPayoffsTotal(p3);
   }
 
   function returnToRoles(o){
@@ -5027,6 +5084,114 @@
       '<button class="btn btn-secondary" id="btn-add-other-proration" style="margin-top:12px">Add Other Proration</button>';
   }
 
+  /* ---------------- Payoff Calculations (2026-08-26) ----------------
+     Principal Balance + per-diem interest (statement-provided, through the closing date) + Other
+     Fees -> Net Payoff, then an explicit "Send to CD/HUD" push -- not a live auto-flow -- into
+     CD Page 3 (purchase: the existing fixed Payoff of First/Second Mortgage fields for First/Second,
+     a tagged line under N's Other Items for Other; refi: a tagged line in the Payoffs and Payments
+     table) and the matching HUD Page 1 target (Reductions Due to Seller for purchase, Amounts Paid
+     By/For Borrower for refi -- HUD has no fixed 1st/2nd fields, so it's always a tagged line).
+     Re-sending after an edit updates the same tagged line by sourceType:sourceId rather than
+     duplicating it (same dedup convention as the CD/HUD line-assignment chips elsewhere) -- except
+     for the purchase First/Second fixed fields, which are a direct overwrite. Switching Position or
+     Transaction Type *after* an initial send can leave a stale line at the old target; re-sending
+     doesn't clean that up automatically, so double-check the old section if either changes. */
+  var PAYOFF_POSITIONS = ["First", "Second", "Other"];
+  function netPayoffAmount(p){
+    var bal = parseFloat(p.principalBalance) || 0;
+    var perDiem = parseFloat(p.perDiem) || 0;
+    var days = parseFloat(p.days) || 0;
+    var fees = parseFloat(p.otherFees) || 0;
+    return bal + (perDiem * days) + fees;
+  }
+  // Suggests Days as Good Through Date -> CD Page 1's Closing Date (falling back to Order Entry's
+  // Settlement Date) -- a suggestion via an explicit "Use N" button, not an auto-fill, since Days
+  // must stay freely editable for a payoff good only through a different date than closing.
+  function payoffSuggestedDays(o, p){
+    if(!p.goodThroughDate) return null;
+    var closing = o.escrow.cdf.page1.closingDate || o.settlementDate;
+    if(!closing) return null;
+    var gt = new Date(p.goodThroughDate + "T00:00:00");
+    var cd = new Date(closing + "T00:00:00");
+    if(isNaN(gt.getTime()) || isNaN(cd.getTime())) return null;
+    var diff = Math.round((cd - gt) / 86400000);
+    return diff >= 0 ? diff : null;
+  }
+  function upsertTaggedLineItem(arr, sourceType, sourceId, description, amount, amountKey){
+    var existing = arr.filter(function(it){ return it.sourceType === sourceType && it.sourceId === sourceId; })[0];
+    if(existing){
+      existing.description = description;
+      existing[amountKey] = amount;
+    } else {
+      var it = { id: uid(), description: description, sourceType: sourceType, sourceId: sourceId };
+      it[amountKey] = amount;
+      arr.push(it);
+    }
+  }
+  function payoffCdHudTargetLabel(o, p){
+    if(cdfIsRefi(o)) return "CD Page 3 Payoffs and Payments → HUD Amounts Paid By/For Borrower";
+    if(p.position === "First") return "CD Page 3 Payoff of First Mortgage → HUD Reductions Due to Seller";
+    if(p.position === "Second") return "CD Page 3 Payoff of Second Mortgage → HUD Reductions Due to Seller";
+    return "CD Page 3 N. Due from Seller (Other Items) → HUD Reductions Due to Seller";
+  }
+  function sendPayoffToCdHud(o, p){
+    var amt = netPayoffAmount(p);
+    var refi = cdfIsRefi(o);
+    var p3 = o.escrow.cdf.page3, hud1 = o.escrow.hud.page1;
+    var label = p.label || (p.position + " Mortgage Payoff");
+    if(refi){
+      upsertTaggedLineItem(p3.payoffsAndPayments, "payoff", p.id, label, amt, "amount");
+      upsertTaggedLineItem(hud1.amountsPaidByForBorrower, "payoff", p.id, label, amt, "amount");
+    } else if(p.position === "First"){
+      p3.fixed.firstMortgagePayoff = amt;
+      upsertTaggedLineItem(hud1.reductionsDueToSeller, "payoff", p.id, label, amt, "amount");
+    } else if(p.position === "Second"){
+      p3.fixed.secondMortgagePayoff = amt;
+      upsertTaggedLineItem(hud1.reductionsDueToSeller, "payoff", p.id, label, amt, "amount");
+    } else {
+      upsertTaggedLineItem(p3.dueFromSeller, "payoff", p.id, label, amt, "amount");
+      upsertTaggedLineItem(hud1.reductionsDueToSeller, "payoff", p.id, label, amt, "amount");
+    }
+    p.sentToCdHud = true;
+  }
+  function tplPayoffRow(o, p){
+    var amt = netPayoffAmount(p);
+    var suggestedDays = payoffSuggestedDays(o, p);
+    return '<div class="card" style="background:var(--paper);margin-top:12px">' +
+      '<div class="field-grid cols-3">' +
+        '<div class="field"><label>Label</label><input type="text" id="payoff-label-' + p.id + '" value="' + esc(p.label) + '" placeholder="e.g. First Mortgage — ABC Bank"></div>' +
+        field("Position", selectField("payoff-position-" + p.id, PAYOFF_POSITIONS, p.position)) +
+        '<div class="field"><label>Principal Balance</label><input type="text" id="payoff-principalBalance-' + p.id + '" value="' + esc(p.principalBalance) + '" placeholder="0.00"></div>' +
+      '</div>' +
+      '<div class="field-grid cols-3" style="margin-top:10px">' +
+        '<div class="field"><label>Per Diem Interest</label><input type="text" id="payoff-perDiem-' + p.id + '" value="' + esc(p.perDiem) + '" placeholder="$/day"></div>' +
+        '<div class="field"><label>Good Through Date</label><input type="date" id="payoff-goodThroughDate-' + p.id + '" value="' + esc(p.goodThroughDate) + '"></div>' +
+        '<div class="field"><label>Days</label><input type="text" id="payoff-days-' + p.id + '" value="' + esc(p.days) + '" placeholder="0"></div>' +
+      '</div>' +
+      '<div class="field-grid cols-3" style="margin-top:10px">' +
+        '<div class="field"><label>Other Fees</label><input type="text" id="payoff-otherFees-' + p.id + '" value="' + esc(p.otherFees) + '" placeholder="0.00"></div>' +
+        docFact("Net Payoff", fmtMoney(amt)) +
+      '</div>' +
+      (suggestedDays !== null ? '<p class="field-hint" style="margin:8px 0 0">Good Through Date to Closing Date suggests <strong>' + suggestedDays + '</strong> day(s). <button class="btn btn-ghost" data-use-payoff-days="' + p.id + '" style="font-size:11px">Use ' + suggestedDays + '</button></p>' : '') +
+      '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-top:10px">' +
+        (p.sentToCdHud ?
+          '<p class="field-hint" style="margin:0;color:var(--green)">&#10003; Sent to CD/HUD (' + esc(payoffCdHudTargetLabel(o, p)) + ')</p>' +
+          '<button class="btn btn-ghost" data-refill-payoff="' + p.id + '" style="font-size:11px">Refill CD/HUD</button>'
+        :
+          '<p class="field-hint" style="margin:0">Will send to: ' + esc(payoffCdHudTargetLabel(o, p)) + '</p>' +
+          '<button class="btn btn-secondary" data-send-payoff="' + p.id + '" style="font-size:11px">Send to CD/HUD</button>'
+        ) +
+      '</div>' +
+      '<div style="display:flex;justify-content:flex-end;margin-top:8px"><button class="icon-btn" data-del-payoff="' + p.id + '" title="Remove">' + trashIcon() + '</button></div>' +
+    '</div>';
+  }
+  function tplEscrowPayoffs(o){
+    var rows = o.escrow.payoffs.length === 0 ? '<div class="empty-card">No payoffs calculated yet.</div>' : o.escrow.payoffs.map(function(p){ return tplPayoffRow(o, p); }).join("");
+    return '<p class="panel-intro">Compute a Net Payoff from a lender\'s payoff statement (Principal Balance + per-diem interest through the closing date + any Other Fees), then send it to CD Page 3 / HUD. First/Second post to CD\'s fixed Payoff of First/Second Mortgage fields (purchase mode) or the Payoffs and Payments table (refi mode); Other posts as a tagged line item. Re-sending after an edit updates the same CD/HUD line rather than duplicating it &mdash; but only for the target implied by the current Position/Transaction Type, so double-check the old section if either changes after an initial send.</p>' +
+      rows +
+      '<button class="btn btn-secondary" id="btn-add-payoff" style="margin-top:12px">Add Payoff</button>';
+  }
+
   /* ---------------- Recording (2026-08-26) ----------------
      Recording fees, transfer taxes, and stamp taxes -- plain arithmetic from manually-entered
      rates/fees (same "Genesis doesn't compute rates" philosophy as Title Insurance Premiums), all
@@ -5123,7 +5288,7 @@
 
   function tplEscrowCdf1(o){
     var p1 = o.escrow.cdf.page1;
-    var totalClosingCosts = cdfBorrowerClosingCostsTotal(o.escrow.cdf.page2);
+    var totalClosingCosts = cdfBorrowerClosingCostsTotal(o);
     var cashToClose = cdfIsRefi(o) ? cdfCashToCloseRefiFinal(o) : cdfCashToCloseBorrower(o);
     return '<p class="panel-intro">Closing Disclosure &mdash; Page 1. Recreates the real CD\'s look (Cam\'s call) laid over Genesis\'s normal editable fields &mdash; not a pixel-exact copy of the PDF.</p>' +
       '<div class="cdform-header-block">' +
@@ -5203,14 +5368,26 @@
     {key:"paidByOthers", label:"Paid by Others", group:""}
   ];
   var CDF_PAGE2_SECTIONS = ["sectionA","sectionB","sectionC","sectionE","sectionF","sectionG","sectionH"];
-  function cdfBorrowerClosingCostsTotal(p2){
+  // Points (Section A), Prepaid Interest (Section F) and the Aggregate Adjustment (Section G) all
+  // post into the Borrower-At-Closing bucket (Cam's simplifying call -- these are virtually always
+  // borrower-paid-at-closing in practice); Lender Credits reduces the Borrower-At-Closing total the
+  // same way the real form's Section J box nets Lender Credits against Closing Costs Subtotal
+  // (D+I). Anything computed here therefore flows automatically into J wherever J is used downstream
+  // (Page 1's Closing Costs meta, Page 3's Calculating Cash to Close, the refi Cash-to-Close formula).
+  function cdfBorrowerClosingCostsTotal(o){
+    var p2 = o.escrow.cdf.page2;
     var total = 0;
     CDF_PAGE2_SECTIONS.forEach(function(k){ total += lineItemTotal(p2[k], "borrowerAtClosing") + lineItemTotal(p2[k], "borrowerBeforeClosing"); });
+    total += cdfPointsAmount(o) + cdfPrepaidInterestAmount(o) + cdfAggregateAdjustmentAmount(o);
+    total -= (parseFloat(p2.lenderCredits) || 0);
     return total;
   }
-  function cdfBorrowerAtClosingCostsTotal(p2){
+  function cdfBorrowerAtClosingCostsTotal(o){
+    var p2 = o.escrow.cdf.page2;
     var total = 0;
     CDF_PAGE2_SECTIONS.forEach(function(k){ total += lineItemTotal(p2[k], "borrowerAtClosing"); });
+    total += cdfPointsAmount(o) + cdfPrepaidInterestAmount(o) + cdfAggregateAdjustmentAmount(o);
+    total -= (parseFloat(p2.lenderCredits) || 0);
     return total;
   }
   function cdfBorrowerBeforeClosingCostsTotal(p2){
@@ -5227,14 +5404,18 @@
     CDF_PAGE2_SECTIONS.forEach(function(k){ total += lineItemTotal(p2[k], "sellerAtClosing"); });
     return total;
   }
-  function cdfLoanCostsSubtotal(p2){
+  function cdfLoanCostsSubtotal(o){
+    var p2 = o.escrow.cdf.page2;
     return lineItemTotal(p2.sectionA, "borrowerAtClosing") + lineItemTotal(p2.sectionA, "borrowerBeforeClosing") +
       lineItemTotal(p2.sectionB, "borrowerAtClosing") + lineItemTotal(p2.sectionB, "borrowerBeforeClosing") +
-      lineItemTotal(p2.sectionC, "borrowerAtClosing") + lineItemTotal(p2.sectionC, "borrowerBeforeClosing");
+      lineItemTotal(p2.sectionC, "borrowerAtClosing") + lineItemTotal(p2.sectionC, "borrowerBeforeClosing") +
+      cdfPointsAmount(o);
   }
-  function cdfOtherCostsSubtotal(p2){
+  function cdfOtherCostsSubtotal(o){
+    var p2 = o.escrow.cdf.page2;
     var total = 0;
     ["sectionE","sectionF","sectionG","sectionH"].forEach(function(k){ total += lineItemTotal(p2[k], "borrowerAtClosing") + lineItemTotal(p2[k], "borrowerBeforeClosing"); });
+    total += cdfPrepaidInterestAmount(o) + cdfAggregateAdjustmentAmount(o);
     return total;
   }
   function tplEscrowCdf2(o){
@@ -5246,12 +5427,37 @@
         (chipsHtml ? '<div class="seed-picker" style="padding:8px 12px 0">' + chipsHtml + '</div>' : '') +
         tplCdfLineItemTable(p2[key], cols, "cdf2" + key, "Subtotal");
     }
+    // Points (A), Prepaid Interest (F) and the Aggregate Adjustment (G) are single fixed lines --
+    // matching the cdFixedLine convention already used on Page 3's K/L/M/N -- rather than regular
+    // free-text rows, since each needs its own small % / per-diem / negative-allowed calculator.
+    var pointsAmt = cdfPointsAmount(o);
+    var pointsLine = cdFixedLine("01", "% of Loan Amount (Points)",
+      '<span style="display:flex;align-items:center;gap:6px;justify-content:flex-end">' +
+        '<input type="text" id="cdf2-sectionA-pointsPercent" value="' + esc(p2.sectionAFixed.pointsPercent) + '" placeholder="0.000" style="width:64px;text-align:right">%' +
+        '<span style="min-width:84px;text-align:right;font-weight:600">' + fmtMoney(pointsAmt) + '</span>' +
+      '</span>');
+    var prepaidAmt = cdfPrepaidInterestAmount(o);
+    var prepaidLine = cdFixedLine("01", "Prepaid Interest",
+      '<span style="display:flex;align-items:center;gap:6px;justify-content:flex-end">' +
+        '<input type="text" id="cdf2-sectionF-perDiemRate" value="' + esc(p2.sectionFFixed.perDiemRate) + '" placeholder="$/day" style="width:70px;text-align:right">&times;' +
+        '<input type="text" id="cdf2-sectionF-perDiemDays" value="' + esc(p2.sectionFFixed.perDiemDays) + '" placeholder="days" style="width:50px;text-align:right">' +
+        '<span style="min-width:84px;text-align:right;font-weight:600">' + fmtMoney(prepaidAmt) + '</span>' +
+      '</span>') +
+      '<div style="padding:2px 14px 8px"><button class="btn btn-ghost" id="btn-refill-cdf2-perdiem" style="font-size:11px">Refill Per Diem from Loan Amount &times; Rate &divide; 360</button></div>';
+    var aggAdjAmt = cdfAggregateAdjustmentAmount(o);
+    var aggAdjLine = '<div class="cdform-row" style="grid-template-columns:1fr auto"><div>Aggregate Adjustment</div>' +
+      '<div class="cdform-amt"><input type="text" id="cdf2-sectionG-aggregateAdjustment" value="' + esc(p2.sectionGFixed.aggregateAdjustment) + '" placeholder="0.00 (can be negative)"></div></div>';
     // Additional Title/Escrow Charges, Title Insurance Premiums, Endorsements, and Recording are
     // assigned onto these sections from their own source screens (a Section B/C/E/H choice plus a
     // specific-line-or-next-available position there) rather than via a chip picker here.
-    var loanCosts = sectionBlock("sectionA", "A. Origination Charges") + sectionBlock("sectionB", "B. Services Borrower Did Not Shop For") + sectionBlock("sectionC", "C. Services Borrower Did Shop For");
-    var otherCosts = sectionBlock("sectionE", "E. Taxes and Other Government Fees") + sectionBlock("sectionF", "F. Prepaids") + sectionBlock("sectionG", "G. Initial Escrow Payment at Closing") + sectionBlock("sectionH", "H. Other");
-    var d = cdfLoanCostsSubtotal(p2), i = cdfOtherCostsSubtotal(p2), j = cdfBorrowerClosingCostsTotal(p2);
+    var loanCosts = '<div class="cdform-row section-label">A. Origination Charges</div>' + pointsLine + tplCdfLineItemTable(p2.sectionA, cols, "cdf2sectionA", "Subtotal", 1) +
+      sectionBlock("sectionB", "B. Services Borrower Did Not Shop For") + sectionBlock("sectionC", "C. Services Borrower Did Shop For");
+    var otherCosts = sectionBlock("sectionE", "E. Taxes and Other Government Fees") +
+      '<div class="cdform-row section-label">F. Prepaids</div>' + prepaidLine + tplCdfLineItemTable(p2.sectionF, cols, "cdf2sectionF", "Subtotal", 1) +
+      '<div class="cdform-row section-label">G. Initial Escrow Payment at Closing</div>' + tplCdfEscrowTable(p2.sectionG, "cdf2sectionG") + aggAdjLine +
+      sectionBlock("sectionH", "H. Other");
+    var d = cdfLoanCostsSubtotal(o), i = cdfOtherCostsSubtotal(o), j = cdfBorrowerClosingCostsTotal(o);
+    var lenderCredits = parseFloat(p2.lenderCredits) || 0;
     return '<p class="panel-intro">Closing Disclosure &mdash; Page 2 (Closing Cost Details).' + (refi ? ' Refinance mode: Seller-Paid columns dropped (no seller on this file).' : '') + '</p>' +
       '<div class="cdform-wrap">' + cdBar("Loan Costs") + '<div class="cdform-table">' + loanCosts +
         '<div class="cdform-row total" style="grid-template-columns:1fr auto"><div>D. Total Loan Costs (Borrower-Paid)</div><div class="cdform-amt-static">' + fmtMoney(d) + '</div></div>' +
@@ -5260,8 +5466,78 @@
         '<div class="cdform-row total" style="grid-template-columns:1fr auto"><div>I. Total Other Costs (Borrower-Paid)</div><div class="cdform-amt-static">' + fmtMoney(i) + '</div></div>' +
       '</div></div>' +
       '<div class="cdform-wrap">' + cdBar("Total Closing Costs (J)") + '<div class="cdform-table">' +
-        '<div class="cdform-row total" style="grid-template-columns:1fr auto"><div>J. Total Closing Costs (Borrower-Paid) = D + I</div><div class="cdform-amt-static">' + fmtMoney(j) + '</div></div>' +
+        '<div class="cdform-row" style="grid-template-columns:1fr auto"><div>Closing Costs Subtotals (D + I)</div><div class="cdform-amt-static">' + fmtMoney(d + i) + '</div></div>' +
+        '<div class="cdform-row" style="grid-template-columns:1fr auto"><div>Lender Credits</div><div class="cdform-amt"><input type="text" id="cdf2-lenderCredits" value="' + esc(p2.lenderCredits) + '" placeholder="0.00"></div></div>' +
+        '<div class="cdform-row total" style="grid-template-columns:1fr auto"><div>J. Total Closing Costs (Borrower-Paid)</div><div class="cdform-amt-static">' + fmtMoney(j) + '</div></div>' +
       '</div></div>';
+  }
+  // Section G's escrow reserve rows compute Amount = Per Month x # Months (written into the item's
+  // borrowerAtClosing, so the existing D/I/J totals -- which only know how to read borrowerAtClosing
+  // -- pick it up without any further change). Before-Closing/Seller/Paid-by-Others columns aren't
+  // offered here since initial escrow reserves are, in practice, always borrower-paid-at-closing.
+  function tplCdfEscrowTable(items, prefix){
+    items = items || [];
+    var colTemplate = "26px 2fr 100px 70px 100px 26px";
+    var headerRow = '<div class="cdform-row header" style="display:grid;grid-template-columns:' + colTemplate + '">' +
+      '<div></div><div>Description</div><div>Per Month</div><div># Months</div><div>Amount</div><div></div></div>';
+    var rows = items.map(function(it, idx){
+      var num = String(idx + 1); if(num.length < 2) num = "0" + num;
+      return '<div class="cdform-row" style="display:grid;grid-template-columns:' + colTemplate + '">' +
+        '<div class="cdform-num">' + num + '</div>' +
+        '<div class="cdform-label"><input type="text" id="' + prefix + '-desc-' + it.id + '" value="' + esc(it.description) + '" placeholder="Description"></div>' +
+        '<div class="cdform-amt"><input type="text" id="' + prefix + '-perMonth-' + it.id + '" value="' + esc(it.perMonth) + '" placeholder="0.00"></div>' +
+        '<div class="cdform-amt"><input type="text" id="' + prefix + '-numMonths-' + it.id + '" value="' + esc(it.numMonths) + '" placeholder="0"></div>' +
+        '<div class="cdform-amt-static">' + fmtMoney(parseFloat(it.borrowerAtClosing) || 0) + '</div>' +
+        '<button class="icon-btn cdform-del" data-li-del="' + prefix + ':' + it.id + '" title="Remove">' + trashIcon() + '</button>' +
+      '</div>';
+    }).join("");
+    var sum = items.reduce(function(s, it){ var n = parseFloat(it.borrowerAtClosing); return s + (isNaN(n) ? 0 : n); }, 0);
+    var subtotalRow = '<div class="cdform-row subtotal" style="display:grid;grid-template-columns:' + colTemplate + '">' +
+      '<div></div><div>Subtotal</div><div></div><div></div><div class="cdform-amt-static">' + fmtMoney(sum) + '</div><div></div></div>';
+    var addRow = '<div class="cdform-row" style="display:grid;grid-template-columns:' + colTemplate + ';align-items:center">' +
+      '<div></div><div><input type="text" id="' + prefix + '-new-desc" placeholder="Add a line item"></div>' +
+      '<div><input type="text" id="' + prefix + '-new-perMonth" placeholder="0.00"></div>' +
+      '<div><input type="text" id="' + prefix + '-new-numMonths" placeholder="0"></div><div></div>' +
+      '<button class="btn btn-secondary" data-li-add="' + prefix + '" style="font-size:11px;padding:6px 8px">+</button>' +
+    '</div>';
+    return headerRow + rows + subtotalRow + addRow;
+  }
+  function wireCdfEscrowTable(items, prefix){
+    items.forEach(function(it){
+      var descEl = document.getElementById(prefix + "-desc-" + it.id);
+      if(descEl) descEl.addEventListener("change", function(){ it.description = descEl.value; save(); renderTabPanel(); });
+      var pmEl = document.getElementById(prefix + "-perMonth-" + it.id);
+      var nmEl = document.getElementById(prefix + "-numMonths-" + it.id);
+      function recompute(){
+        it.perMonth = pmEl ? pmEl.value : it.perMonth;
+        it.numMonths = nmEl ? nmEl.value : it.numMonths;
+        var pm = parseFloat(it.perMonth) || 0, nm = parseFloat(it.numMonths) || 0;
+        it.borrowerAtClosing = (pm * nm) || "";
+        save(); renderTabPanel();
+      }
+      if(pmEl) pmEl.addEventListener("change", recompute);
+      if(nmEl) nmEl.addEventListener("change", recompute);
+    });
+    var addBtn = document.querySelector('[data-li-add="' + prefix + '"]');
+    if(addBtn) addBtn.addEventListener("click", function(){
+      var descEl = document.getElementById(prefix + "-new-desc");
+      var pmEl = document.getElementById(prefix + "-new-perMonth");
+      var nmEl = document.getElementById(prefix + "-new-numMonths");
+      var desc = descEl ? descEl.value.trim() : "";
+      var pm = pmEl ? pmEl.value : "", nm = nmEl ? nmEl.value : "";
+      if(!desc && !pm && !nm) return;
+      var pmN = parseFloat(pm) || 0, nmN = parseFloat(nm) || 0;
+      items.push({ id: uid(), description: desc, perMonth: pm, numMonths: nm, borrowerAtClosing: (pmN * nmN) || "", borrowerBeforeClosing: "", sellerAtClosing: "", sellerBeforeClosing: "", paidByOthers: "" });
+      save(); renderTabPanel();
+    });
+    document.querySelectorAll('[data-li-del^="' + prefix + ':"]').forEach(function(el){
+      el.addEventListener("click", function(){
+        var val = el.getAttribute("data-li-del");
+        var id = val.slice(prefix.length + 1);
+        for(var k=0;k<items.length;k++){ if(items[k].id === id){ items.splice(k,1); break; } }
+        save(); renderTabPanel();
+      });
+    });
   }
 
   var CDF_PAGE3_COLS = [{key:"amount", label:"Amount"}];
@@ -5273,13 +5549,13 @@
     if(refi){
       calcRows =
         cdCalcRow("Loan Amount", cdCalcInput("cdf3calc-loanAmountLE", calc.loanAmountLE), cdCalcStatic(o.escrow.cdf.page1.loanAmount || 0)) +
-        cdCalcRow("Total Closing Costs (J)", cdCalcInput("cdf3calc-totalClosingCostsLE", calc.totalClosingCostsLE), cdCalcStatic(cdfBorrowerClosingCostsTotal(p2))) +
+        cdCalcRow("Total Closing Costs (J)", cdCalcInput("cdf3calc-totalClosingCostsLE", calc.totalClosingCostsLE), cdCalcStatic(cdfBorrowerClosingCostsTotal(o))) +
         cdCalcRow("Closing Costs Paid Before Closing", cdCalcInput("cdf3calc-closingCostsPaidBeforeClosingLE", calc.closingCostsPaidBeforeClosingLE), cdCalcStatic(cdfBorrowerBeforeClosingCostsTotal(p2))) +
         cdCalcRow("Total Payoffs and Payments (K)", cdCalcInput("cdf3calc-payoffsLE", calc.payoffsLE), cdCalcStatic(cdfPayoffsTotal(p3))) +
         cdCalcRow("Cash to Close", cdCalcInput("cdf3calc-cashToCloseLE", calc.cashToCloseLE), cdCalcStatic(cdfCashToCloseRefiFinal(o)), true);
     } else {
       calcRows =
-        cdCalcRow("Total Closing Costs (J)", cdCalcInput("cdf3calc-totalClosingCostsLE", calc.totalClosingCostsLE), cdCalcStatic(cdfBorrowerClosingCostsTotal(p2))) +
+        cdCalcRow("Total Closing Costs (J)", cdCalcInput("cdf3calc-totalClosingCostsLE", calc.totalClosingCostsLE), cdCalcStatic(cdfBorrowerClosingCostsTotal(o))) +
         cdCalcRow("Closing Costs Paid Before Closing", cdCalcInput("cdf3calc-closingCostsPaidBeforeClosingLE", calc.closingCostsPaidBeforeClosingLE), cdCalcStatic(cdfBorrowerBeforeClosingCostsTotal(p2))) +
         cdCalcRow("Closing Costs Financed (Paid from your Loan Amount)", cdCalcInput("cdf3calc-closingCostsFinancedLE", calc.closingCostsFinancedLE), cdCalcInput("cdf3calc-closingCostsFinancedFinal", calc.closingCostsFinancedFinal)) +
         cdCalcRow("Down Payment/Funds from Borrower", cdCalcInput("cdf3calc-downPaymentLE", calc.downPaymentLE), cdCalcInput("cdf3calc-downPaymentFinal", calc.downPaymentFinal)) +
@@ -5301,7 +5577,7 @@
     } else {
       var f = p3.fixed;
       var kFixed = cdFixedLine("01", "Sale Price of Property", cdCalcStatic(cdfSalePrice(o))) +
-        cdFixedLine("02", "Closing Costs Paid at Closing (J)", cdCalcStatic(cdfBorrowerAtClosingCostsTotal(p2))) +
+        cdFixedLine("02", "Closing Costs Paid at Closing (J)", cdCalcStatic(cdfBorrowerAtClosingCostsTotal(o))) +
         cdProrationRows(o, "k");
       var kOther = '<div class="cdform-row section-label" style="font-size:11px">Other Items</div>' + tplCdfLineItemTable(p3.dueFromBorrower, CDF_PAGE3_COLS, "cdf3k", "Other Items Subtotal");
       var borrowerCol = '<div class="cdform-row section-label">K. Due from Borrower at Closing</div>' + kFixed + kOther +
@@ -8639,6 +8915,48 @@
       save(); renderTabPanel();
     });
 
+    // Payoff Calculations
+    o.escrow.payoffs.forEach(function(p){
+      bindText("payoff-label-" + p.id, function(v){ p.label = v; });
+      bindText("payoff-position-" + p.id, function(v){ p.position = v; });
+      ["principalBalance","perDiem","goodThroughDate","days","otherFees"].forEach(function(f){
+        var el = document.getElementById("payoff-" + f + "-" + p.id);
+        if(el) el.addEventListener("change", function(){ p[f] = el.value; save(); renderTabPanel(); });
+      });
+    });
+    document.querySelectorAll('[data-use-payoff-days]').forEach(function(el){
+      el.addEventListener("click", function(){
+        var id = el.getAttribute("data-use-payoff-days");
+        var p = o.escrow.payoffs.filter(function(x){ return x.id === id; })[0];
+        if(!p) return;
+        var days = payoffSuggestedDays(o, p);
+        if(days !== null) p.days = days;
+        save(); renderTabPanel();
+      });
+    });
+    document.querySelectorAll('[data-send-payoff],[data-refill-payoff]').forEach(function(el){
+      el.addEventListener("click", function(){
+        var id = el.getAttribute("data-send-payoff") || el.getAttribute("data-refill-payoff");
+        var p = o.escrow.payoffs.filter(function(x){ return x.id === id; })[0];
+        if(!p) return;
+        sendPayoffToCdHud(o, p);
+        logHistoryEvent(o, "Escrow / Closing", "milestone", "Payoff (" + (p.label || p.position) + ") sent to CD/HUD: " + fmtMoney(netPayoffAmount(p)));
+        save(); renderTabPanel();
+      });
+    });
+    document.querySelectorAll('[data-del-payoff]').forEach(function(el){
+      el.addEventListener("click", function(){
+        var id = el.getAttribute("data-del-payoff");
+        o.escrow.payoffs = o.escrow.payoffs.filter(function(x){ return x.id !== id; });
+        save(); renderTabPanel();
+      });
+    });
+    var btnAddPayoff = document.getElementById("btn-add-payoff");
+    if(btnAddPayoff) btnAddPayoff.addEventListener("click", function(){
+      o.escrow.payoffs.push({ id: uid(), label: "", position: "First", principalBalance: "", perDiem: "", goodThroughDate: "", days: "", otherFees: "", sentToCdHud: false });
+      save(); renderTabPanel();
+    });
+
     // Recording -- Recording Fees / Transfer Taxes / Stamp Taxes, all reporting to CD Section E / HUD 1200
     (function(){
       var rec = o.escrow.recording;
@@ -8754,11 +9072,37 @@
       save(); renderTabPanel();
     });
 
-    // CDF Page 2 -- 7 sections via the CD-style line-item table; refi mode drops the Seller-Paid columns
+    // CDF Page 2 -- 7 sections via the CD-style line-item table; refi mode drops the Seller-Paid columns.
+    // Section G gets its own Per Month x # Months wiring (wireCdfEscrowTable) instead of the generic
+    // table wiring, since its rows compute their own Amount rather than taking one directly.
     var cdf2Cols = cdfIsRefi(o) ? CDF_PAGE2_COLS_REFI : CDF_PAGE2_COLS_PURCHASE;
     CDF_PAGE2_SECTIONS.forEach(function(k){
+      if(k === "sectionG") return;
       wireLineItemTable(o.escrow.cdf.page2[k], "cdf2" + k, cdf2Cols);
     });
+    wireCdfEscrowTable(o.escrow.cdf.page2.sectionG, "cdf2sectionG");
+    // Section A Points / Section F Prepaid Interest / Section G Aggregate Adjustment / Section J
+    // Lender Credits all feed live totals shown right below them on this same screen, so -- like
+    // Page 3's K/L/M/N fixed lines above -- they re-render on change instead of using plain bindText.
+    var cdf2P2 = o.escrow.cdf.page2;
+    var cdf2PointsEl = document.getElementById("cdf2-sectionA-pointsPercent");
+    if(cdf2PointsEl) cdf2PointsEl.addEventListener("change", function(){ cdf2P2.sectionAFixed.pointsPercent = cdf2PointsEl.value; save(); renderTabPanel(); });
+    var cdf2PerDiemRateEl = document.getElementById("cdf2-sectionF-perDiemRate");
+    if(cdf2PerDiemRateEl) cdf2PerDiemRateEl.addEventListener("change", function(){ cdf2P2.sectionFFixed.perDiemRate = cdf2PerDiemRateEl.value; save(); renderTabPanel(); });
+    var cdf2PerDiemDaysEl = document.getElementById("cdf2-sectionF-perDiemDays");
+    if(cdf2PerDiemDaysEl) cdf2PerDiemDaysEl.addEventListener("change", function(){ cdf2P2.sectionFFixed.perDiemDays = cdf2PerDiemDaysEl.value; save(); renderTabPanel(); });
+    var btnRefillCdf2PerDiem = document.getElementById("btn-refill-cdf2-perdiem");
+    if(btnRefillCdf2PerDiem) btnRefillCdf2PerDiem.addEventListener("click", function(){
+      var p1 = o.escrow.cdf.page1;
+      var loanAmt = cdfLoanAmount(o), rate = parseFloat(p1.interestRate) || 0;
+      cdf2P2.sectionFFixed.perDiemRate = (loanAmt * (rate / 100) / 360) || "";
+      logHistoryEvent(o, "Escrow / Closing", "milestone", "CDF Page 2 Prepaid Interest per diem refilled from Loan Amount x Rate / 360");
+      save(); renderTabPanel();
+    });
+    var cdf2AggAdjEl = document.getElementById("cdf2-sectionG-aggregateAdjustment");
+    if(cdf2AggAdjEl) cdf2AggAdjEl.addEventListener("change", function(){ cdf2P2.sectionGFixed.aggregateAdjustment = cdf2AggAdjEl.value; save(); renderTabPanel(); });
+    var cdf2LenderCreditsEl = document.getElementById("cdf2-lenderCredits");
+    if(cdf2LenderCreditsEl) cdf2LenderCreditsEl.addEventListener("change", function(){ cdf2P2.lenderCredits = cdf2LenderCreditsEl.value; save(); renderTabPanel(); });
     // CDF Page 3 -- K/L/M/N (purchase) or Payoffs and Payments (refi), plus Calculating Cash to Close
     if(cdfIsRefi(o)){
       wireLineItemTable(o.escrow.cdf.page3.payoffsAndPayments, "cdf3payoffs", CDF_PAGE3_COLS);
