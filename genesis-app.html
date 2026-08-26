@@ -1198,6 +1198,7 @@
             loanTerm: "", loanPurpose: "", loanProduct: "", loanType: "", loanIdNumber: "", micNumber: "",
             interestRate: "", monthlyPI: "", hasPrepaymentPenalty: "", hasBalloonPayment: "",
             principalInterestAmount: "", mortgageInsuranceAmount: "", estimatedEscrowAmount: "", estimatedTotalMonthlyPayment: "",
+            projectedPaymentsPeriod1Label: "", projectedPaymentsExtra: [],
             borrowerNames: "", sellerNames: "", lenderName: ""
           },
           page2: { sectionA: [], sectionB: [], sectionC: [], sectionE: [], sectionF: [], sectionG: [], sectionH: [] },
@@ -1250,6 +1251,8 @@
     // split, Page 3's Calculating Cash to Close + Payoffs and Payments).
     var ecdf = o.escrow.cdf;
     if(ecdf.page1.loanAmount === undefined) ecdf.page1.loanAmount = "";
+    if(ecdf.page1.projectedPaymentsPeriod1Label === undefined) ecdf.page1.projectedPaymentsPeriod1Label = "";
+    if(!ecdf.page1.projectedPaymentsExtra) ecdf.page1.projectedPaymentsExtra = [];
     if(!ecdf.page3.payoffsAndPayments) ecdf.page3.payoffsAndPayments = [];
     if(!ecdf.page3.fixed) ecdf.page3.fixed = { deposit: "", sellerCredit: "", firstMortgagePayoff: "", secondMortgagePayoff: "" };
     (o.escrow.taxProrations || []).concat(o.escrow.otherProrations || []).forEach(function(p){
@@ -1509,6 +1512,7 @@
             loanTerm: "", loanPurpose: "", loanProduct: "", loanType: "", loanIdNumber: "", micNumber: "",
             interestRate: "", monthlyPI: "", hasPrepaymentPenalty: "", hasBalloonPayment: "",
             principalInterestAmount: "", mortgageInsuranceAmount: "", estimatedEscrowAmount: "", estimatedTotalMonthlyPayment: "",
+            projectedPaymentsPeriod1Label: "", projectedPaymentsExtra: [],
             borrowerNames: "", sellerNames: "", lenderName: ""
           },
           page2: { sectionA: [], sectionB: [], sectionC: [], sectionE: [], sectionF: [], sectionG: [], sectionH: [] },
@@ -4511,13 +4515,25 @@
         cdMeta("Prepayment Penalty?", selectField("cdf1-hasPrepaymentPenalty", YES_NO_OPTIONS, p1.hasPrepaymentPenalty)) +
         cdMeta("Balloon Payment?", selectField("cdf1-hasBalloonPayment", YES_NO_OPTIONS, p1.hasBalloonPayment)) +
       '</div></div>' +
-      '<div class="cdform-wrap">' + cdBar("Projected Payments", "simplified") + '<div class="cdform-table">' +
+      '<div class="cdform-wrap">' + cdBar("Projected Payments", p1.projectedPaymentsExtra.length ? "multiple periods" : "simplified") + '<div class="cdform-table">' +
+        (p1.projectedPaymentsExtra.length ? cdMeta("Period 1 Label", '<input type="text" id="cdf1-pp1-label" value="' + esc(p1.projectedPaymentsPeriod1Label) + '" placeholder="e.g. Years 1-7">') : '') +
         cdMeta("Principal &amp; Interest", '<input type="text" id="cdf1-principalInterestAmount" value="' + esc(p1.principalInterestAmount) + '" placeholder="0.00">') +
         cdMeta("Mortgage Insurance", '<input type="text" id="cdf1-mortgageInsuranceAmount" value="' + esc(p1.mortgageInsuranceAmount) + '" placeholder="0.00">') +
         cdMeta("Estimated Escrow", '<input type="text" id="cdf1-estimatedEscrowAmount" value="' + esc(p1.estimatedEscrowAmount) + '" placeholder="0.00">') +
         cdMeta("Estimated Total Monthly Payment", '<input type="text" id="cdf1-estimatedTotalMonthlyPayment" value="' + esc(p1.estimatedTotalMonthlyPayment) + '" placeholder="0.00">') +
       '</div>' +
-        '<p class="cdform-note" style="padding-bottom:10px">Single-period view &mdash; the federal form\'s multi-period (Years 1, 2-7, etc.) breakout for ARM/step loans isn\'t modeled yet.</p>' +
+        p1.projectedPaymentsExtra.map(function(pp, idx){
+          return '<div class="cdform-table" style="border-top:2px solid var(--line)">' +
+            cdMeta("Period " + (idx+2) + " Label", '<input type="text" id="cdf1-ppx-label-' + pp.id + '" value="' + esc(pp.label) + '" placeholder="e.g. Years 8-30">') +
+            cdMeta("Principal &amp; Interest", '<input type="text" id="cdf1-ppx-pi-' + pp.id + '" value="' + esc(pp.principalInterestAmount) + '" placeholder="0.00">') +
+            cdMeta("Mortgage Insurance", '<input type="text" id="cdf1-ppx-mi-' + pp.id + '" value="' + esc(pp.mortgageInsuranceAmount) + '" placeholder="0.00">') +
+            cdMeta("Estimated Escrow", '<input type="text" id="cdf1-ppx-esc-' + pp.id + '" value="' + esc(pp.estimatedEscrowAmount) + '" placeholder="0.00">') +
+            cdMeta("Estimated Total Monthly Payment", '<input type="text" id="cdf1-ppx-total-' + pp.id + '" value="' + esc(pp.estimatedTotalMonthlyPayment) + '" placeholder="0.00">') +
+            '<div style="display:flex;justify-content:flex-end;padding:8px 14px 12px"><button class="icon-btn" data-del-pp="' + pp.id + '" title="Remove period">' + trashIcon() + '</button></div>' +
+          '</div>';
+        }).join('') +
+        '<div style="padding:10px 14px"><button class="btn btn-secondary" id="btn-add-pp" style="font-size:12px">Add Payment Period</button></div>' +
+        '<p class="cdform-note" style="padding:0 14px 10px">' + (p1.projectedPaymentsExtra.length ? "Exact projected amounts per period &mdash; the federal form’s min/max range display for adjustable payments isn’t modeled, just the value expected once each period starts." : "Single period shown. Use Add Payment Period for ARM/step loans whose payment changes at a later point (e.g. Years 1-7, then Years 8-30).") + '</p>' +
       '</div>' +
       '<div class="cdform-wrap">' + cdBar("Costs at Closing") + '<div class="cdform-table">' +
         cdMeta("Closing Costs", '<span class="cdform-amt-static">' + fmtMoney(totalClosingCosts) + '</span>') +
@@ -4736,41 +4752,36 @@
     var grossToSellerTotal = lineItemTotal(p1.grossDueToSeller, "amount");
     var reductionsSellerTotal = lineItemTotal(p1.reductionsDueToSeller, "amount");
     return '<p class="panel-intro">Express HUD &mdash; Page 1 (header + Summary of Borrower\'s / Seller\'s Transaction, lines 100-303 / 400-603).</p>' +
-      '<div class="card">' +
-        '<div class="card-title">Header</div>' +
-        '<div class="field-grid cols-3" style="margin-top:16px">' +
-          field("Type of Loan", selectField("hud1-typeOfLoan", LOAN_TYPE_OPTIONS, p1.typeOfLoan)) +
-          field("Loan Number", '<input type="text" id="hud1-loanNumber" value="' + esc(p1.loanNumber) + '">') +
-          field("MIC #", '<input type="text" id="hud1-micNumber" value="' + esc(p1.micNumber) + '">') +
+      '<div class="cdform-header-block cols-2">' +
+        '<div class="cdform-header-col">' +
+          '<div class="cdform-header-col-title">Loan</div>' +
+          cdMeta("Type of Loan", selectField("hud1-typeOfLoan", LOAN_TYPE_OPTIONS, p1.typeOfLoan)) +
+          cdMeta("Loan Number", '<input type="text" id="hud1-loanNumber" value="' + esc(p1.loanNumber) + '">') +
+          cdMeta("MIC #", '<input type="text" id="hud1-micNumber" value="' + esc(p1.micNumber) + '">') +
         '</div>' +
-        '<div class="field-grid" style="margin-top:10px">' +
-          field("Place of Settlement", '<input type="text" id="hud1-placeOfSettlement" value="' + esc(p1.placeOfSettlement) + '">', "span-2") +
+        '<div class="cdform-header-col">' +
+          '<div class="cdform-header-col-title">Settlement</div>' +
+          cdMeta("Place of Settlement", '<input type="text" id="hud1-placeOfSettlement" value="' + esc(p1.placeOfSettlement) + '">') +
         '</div>' +
       '</div>' +
-      '<div class="card" style="margin-top:16px">' +
-        '<div class="card-title">100. Gross Amount Due from Borrower</div>' +
-        '<div style="margin-top:12px">' + tplLineItemTable(p1.grossDueFromBorrower, HUD_PAGE1_COLS, "hud1gfb") + '</div>' +
-      '</div>' +
-      '<div class="card" style="margin-top:16px">' +
-        '<div class="card-title">200. Amounts Paid by or on Behalf of Borrower</div>' +
-        '<div style="margin-top:12px">' + tplLineItemTable(p1.amountsPaidByForBorrower, HUD_PAGE1_COLS, "hud1pfb") + '</div>' +
-      '</div>' +
-      '<div class="card" style="margin-top:16px">' +
-        '<div class="card-title">303. Cash at Settlement From/To Borrower</div>' +
-        '<div class="field-grid" style="margin-top:12px">' + docFact("100 &minus; 200", fmtMoney(grossFromBorrowerTotal - paidByForBorrowerTotal)) + '</div>' +
-      '</div>' +
-      '<div class="card" style="margin-top:16px">' +
-        '<div class="card-title">400. Gross Amount Due to Seller</div>' +
-        '<div style="margin-top:12px">' + tplLineItemTable(p1.grossDueToSeller, HUD_PAGE1_COLS, "hud1gts") + '</div>' +
-      '</div>' +
-      '<div class="card" style="margin-top:16px">' +
-        '<div class="card-title">500. Reductions in Amount Due to Seller</div>' +
-        '<div style="margin-top:12px">' + tplLineItemTable(p1.reductionsDueToSeller, HUD_PAGE1_COLS, "hud1rds") + '</div>' +
-      '</div>' +
-      '<div class="card" style="margin-top:16px">' +
-        '<div class="card-title">603. Cash at Settlement To/From Seller</div>' +
-        '<div class="field-grid" style="margin-top:12px">' + docFact("400 &minus; 500", fmtMoney(grossToSellerTotal - reductionsSellerTotal)) + '</div>' +
-      '</div>';
+      '<div class="cdform-wrap">' + cdBar("100. Gross Amount Due from Borrower") + '<div class="cdform-table">' +
+        tplCdfLineItemTable(p1.grossDueFromBorrower, HUD_PAGE1_COLS, "hud1gfb", "Subtotal") +
+      '</div></div>' +
+      '<div class="cdform-wrap">' + cdBar("200. Amounts Paid by or on Behalf of Borrower") + '<div class="cdform-table">' +
+        tplCdfLineItemTable(p1.amountsPaidByForBorrower, HUD_PAGE1_COLS, "hud1pfb", "Subtotal") +
+      '</div></div>' +
+      '<div class="cdform-wrap">' + cdBar("303. Cash at Settlement From/To Borrower") + '<div class="cdform-table">' +
+        '<div class="cdform-row total" style="grid-template-columns:1fr auto"><div>303. Cash at Settlement From/To Borrower (100 &minus; 200)</div><div class="cdform-amt-static">' + fmtMoney(grossFromBorrowerTotal - paidByForBorrowerTotal) + '</div></div>' +
+      '</div></div>' +
+      '<div class="cdform-wrap">' + cdBar("400. Gross Amount Due to Seller") + '<div class="cdform-table">' +
+        tplCdfLineItemTable(p1.grossDueToSeller, HUD_PAGE1_COLS, "hud1gts", "Subtotal") +
+      '</div></div>' +
+      '<div class="cdform-wrap">' + cdBar("500. Reductions in Amount Due to Seller") + '<div class="cdform-table">' +
+        tplCdfLineItemTable(p1.reductionsDueToSeller, HUD_PAGE1_COLS, "hud1rds", "Subtotal") +
+      '</div></div>' +
+      '<div class="cdform-wrap">' + cdBar("603. Cash at Settlement To/From Seller") + '<div class="cdform-table">' +
+        '<div class="cdform-row total" style="grid-template-columns:1fr auto"><div>603. Cash at Settlement To/From Seller (400 &minus; 500)</div><div class="cdform-amt-static">' + fmtMoney(grossToSellerTotal - reductionsSellerTotal) + '</div></div>' +
+      '</div></div>';
   }
 
   var HUD_PAGE2_COLS = [
@@ -4788,60 +4799,50 @@
       {key:"section1200", label:"1200. Government Recording and Transfer Charges"},
       {key:"section1300", label:"1300. Additional Settlement Charges"}
     ];
-    var cards = sections.map(function(s){
-      return '<div class="card" style="margin-top:16px">' +
-        '<div class="card-title">' + s.label + '</div>' +
-        '<div style="margin-top:12px">' + tplLineItemTable(p2[s.key], HUD_PAGE2_COLS, "hud2" + s.key) + '</div>' +
-      '</div>';
+    var wraps = sections.map(function(s){
+      return '<div class="cdform-wrap">' + cdBar(s.label) + '<div class="cdform-table">' +
+        tplCdfLineItemTable(p2[s.key], HUD_PAGE2_COLS, "hud2" + s.key, "Subtotal") +
+      '</div></div>';
     }).join("");
     var borrowerTotal = sections.reduce(function(s, sec){ return s + lineItemTotal(p2[sec.key], "borrowerAmount"); }, 0);
     var sellerTotal = sections.reduce(function(s, sec){ return s + lineItemTotal(p2[sec.key], "sellerAmount"); }, 0);
     return '<p class="panel-intro">Express HUD &mdash; Page 2 (Settlement Charges, lines 700-1400).</p>' +
-      cards +
-      '<div class="card" style="margin-top:16px">' +
-        '<div class="card-title">1400. Total Settlement Charges</div>' +
-        '<div class="field-grid" style="margin-top:12px">' +
-          docFact("Borrower Total", fmtMoney(borrowerTotal)) +
-          docFact("Seller Total", fmtMoney(sellerTotal)) +
-        '</div>' +
-      '</div>';
+      wraps +
+      '<div class="cdform-wrap">' + cdBar("1400. Total Settlement Charges") + '<div class="cdform-table">' +
+        '<div class="cdform-row total" style="grid-template-columns:1fr 110px 110px"><div>Total (700-1300)</div><div class="cdform-amt-static">' + fmtMoney(borrowerTotal) + '</div><div class="cdform-amt-static">' + fmtMoney(sellerTotal) + '</div></div>' +
+      '</div></div>';
   }
 
   function tplEscrowHud3(o){
     var p3 = o.escrow.hud.page3;
-    function gfeRow(label, key){
+    function gfeCdRow(label, key){
       var row = p3[key];
       var gfe = parseFloat(row.gfeAmount); var hud = parseFloat(row.hud1Amount);
       var increase = (!isNaN(gfe) && !isNaN(hud)) ? fmtMoney(hud - gfe) : "&mdash;";
-      return '<div class="card" style="background:var(--paper);margin-top:10px">' +
-        '<div class="field-grid cols-3">' +
-          field(label + " &mdash; GFE Amount", '<input type="text" id="hud3-' + key + '-gfeAmount" value="' + esc(row.gfeAmount) + '" placeholder="0.00">') +
-          field(label + " &mdash; HUD-1 Amount", '<input type="text" id="hud3-' + key + '-hud1Amount" value="' + esc(row.hud1Amount) + '" placeholder="0.00">') +
-          docFact("Increase", increase) +
-        '</div>' +
+      return '<div class="cdform-row" style="grid-template-columns:2fr 110px 110px 110px">' +
+        '<div class="cdform-label">' + esc(label) + '</div>' +
+        '<div class="cdform-amt"><input type="text" id="hud3-' + key + '-gfeAmount" value="' + esc(row.gfeAmount) + '" placeholder="0.00"></div>' +
+        '<div class="cdform-amt"><input type="text" id="hud3-' + key + '-hud1Amount" value="' + esc(row.hud1Amount) + '" placeholder="0.00"></div>' +
+        '<div class="cdform-amt-static">' + increase + '</div>' +
       '</div>';
     }
+    var gfeHeader = '<div class="cdform-row header" style="grid-template-columns:2fr 110px 110px 110px"><div></div><div>GFE Amount</div><div>HUD-1 Amount</div><div>Increase</div></div>';
     return '<p class="panel-intro">Express HUD &mdash; Page 3 (Loan Terms / GFE Comparison). Mostly relevant now to Reverse Mortgage files &mdash; other product types can keep this page light.</p>' +
-      '<div class="card">' +
-        '<div class="card-title">Loan Terms</div>' +
-        '<div class="field-grid cols-4" style="margin-top:16px">' +
-          field("Initial Loan Amount", '<input type="text" id="hud3-initialLoanAmount" value="' + esc(p3.initialLoanAmount) + '" placeholder="0.00">') +
-          field("Loan Term", '<input type="text" id="hud3-loanTerm" value="' + esc(p3.loanTerm) + '">') +
-          field("Initial Interest Rate", '<input type="text" id="hud3-initialInterestRate" value="' + esc(p3.initialInterestRate) + '" placeholder="%">') +
-          field("Initial Monthly Amount", '<input type="text" id="hud3-initialMonthlyAmount" value="' + esc(p3.initialMonthlyAmount) + '" placeholder="0.00">') +
-        '</div>' +
-        '<div class="field-grid cols-3" style="margin-top:10px">' +
-          field("Does Rate Adjust?", selectField("hud3-doesRateAdjust", YES_NO_OPTIONS, p3.doesRateAdjust)) +
-          field("Prepayment Penalty?", selectField("hud3-hasPrepaymentPenalty", YES_NO_OPTIONS, p3.hasPrepaymentPenalty)) +
-          field("Balloon Payment?", selectField("hud3-hasBalloonPayment", YES_NO_OPTIONS, p3.hasBalloonPayment)) +
-        '</div>' +
-      '</div>' +
-      '<div class="card" style="margin-top:16px">' +
-        '<div class="card-title">GFE Comparison</div>' +
-        gfeRow("Charges That Cannot Increase", "gfeCannotIncrease") +
-        gfeRow("Charges That Cannot Increase More Than 10%", "gfeTenPercentCap") +
-        gfeRow("Charges That Can Change", "gfeCanChange") +
-      '</div>';
+      '<div class="cdform-wrap">' + cdBar("Loan Terms") + '<div class="cdform-table">' +
+        cdMeta("Initial Loan Amount", '<input type="text" id="hud3-initialLoanAmount" value="' + esc(p3.initialLoanAmount) + '" placeholder="0.00">') +
+        cdMeta("Loan Term", '<input type="text" id="hud3-loanTerm" value="' + esc(p3.loanTerm) + '">') +
+        cdMeta("Initial Interest Rate", '<input type="text" id="hud3-initialInterestRate" value="' + esc(p3.initialInterestRate) + '" placeholder="%">') +
+        cdMeta("Initial Monthly Amount", '<input type="text" id="hud3-initialMonthlyAmount" value="' + esc(p3.initialMonthlyAmount) + '" placeholder="0.00">') +
+        cdMeta("Does Rate Adjust?", selectField("hud3-doesRateAdjust", YES_NO_OPTIONS, p3.doesRateAdjust)) +
+        cdMeta("Prepayment Penalty?", selectField("hud3-hasPrepaymentPenalty", YES_NO_OPTIONS, p3.hasPrepaymentPenalty)) +
+        cdMeta("Balloon Payment?", selectField("hud3-hasBalloonPayment", YES_NO_OPTIONS, p3.hasBalloonPayment)) +
+      '</div></div>' +
+      '<div class="cdform-wrap">' + cdBar("GFE Comparison") + '<div class="cdform-table">' +
+        gfeHeader +
+        gfeCdRow("Charges That Cannot Increase", "gfeCannotIncrease") +
+        gfeCdRow("Charges That Cannot Increase More Than 10%", "gfeTenPercentCap") +
+        gfeCdRow("Charges That Can Change", "gfeCanChange") +
+      '</div></div>';
   }
 
   function tplCurativeRow(item, label, dispositionList, prefix){
@@ -7646,6 +7647,26 @@
     bindText("cdf1-mortgageInsuranceAmount", function(v){ o.escrow.cdf.page1.mortgageInsuranceAmount = v; });
     bindText("cdf1-estimatedEscrowAmount", function(v){ o.escrow.cdf.page1.estimatedEscrowAmount = v; });
     bindText("cdf1-estimatedTotalMonthlyPayment", function(v){ o.escrow.cdf.page1.estimatedTotalMonthlyPayment = v; });
+    bindText("cdf1-pp1-label", function(v){ o.escrow.cdf.page1.projectedPaymentsPeriod1Label = v; });
+    o.escrow.cdf.page1.projectedPaymentsExtra.forEach(function(pp){
+      bindText("cdf1-ppx-label-" + pp.id, function(v){ pp.label = v; });
+      bindText("cdf1-ppx-pi-" + pp.id, function(v){ pp.principalInterestAmount = v; });
+      bindText("cdf1-ppx-mi-" + pp.id, function(v){ pp.mortgageInsuranceAmount = v; });
+      bindText("cdf1-ppx-esc-" + pp.id, function(v){ pp.estimatedEscrowAmount = v; });
+      bindText("cdf1-ppx-total-" + pp.id, function(v){ pp.estimatedTotalMonthlyPayment = v; });
+    });
+    document.querySelectorAll('[data-del-pp]').forEach(function(el){
+      el.addEventListener("click", function(){
+        var id = el.getAttribute("data-del-pp");
+        o.escrow.cdf.page1.projectedPaymentsExtra = o.escrow.cdf.page1.projectedPaymentsExtra.filter(function(pp){ return pp.id !== id; });
+        save(); renderTabPanel();
+      });
+    });
+    var btnAddPp = document.getElementById("btn-add-pp");
+    if(btnAddPp) btnAddPp.addEventListener("click", function(){
+      o.escrow.cdf.page1.projectedPaymentsExtra.push({ id: uid(), label: "", principalInterestAmount: "", mortgageInsuranceAmount: "", estimatedEscrowAmount: "", estimatedTotalMonthlyPayment: "" });
+      save(); renderTabPanel();
+    });
     var btnRefillCdf1Parties = document.getElementById("btn-refill-cdf1-parties");
     if(btnRefillCdf1Parties) btnRefillCdf1Parties.addEventListener("click", function(){
       var p1 = o.escrow.cdf.page1;
