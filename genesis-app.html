@@ -435,6 +435,43 @@
     "Rights of parties in possession, not shown of record",
     "Matters that would be disclosed by an accurate survey"
   ];
+  // Common ALTA endorsement forms, seeded as a starting point -- not an exhaustive or state-specific
+  // list. State/underwriter rate manuals carry their own numbering quirks (e.g. NC's Homeowner's
+  // Policy surcharge, FL's Forgery endorsements) that staff should confirm against the current manual
+  // or the underwriter's online rate calculator (see Title Insurance Premiums) rather than this list.
+  var ENDORSEMENT_SEEDS = [
+    "ALTA 4 — Condominium",
+    "ALTA 5 — Planned Unit Development",
+    "ALTA 6 — Variable Rate Mortgage",
+    "ALTA 6.2 — Variable Rate Mortgage (Negative Amortization)",
+    "ALTA 8.1 — Environmental Protection Lien",
+    "ALTA 9 — Restrictions, Encroachments, Minerals",
+    "ALTA 9.3 — Covenants, Conditions and Restrictions — Unimproved Land",
+    "ALTA 13 — Leasehold Owner's",
+    "ALTA 17 — Access and Entry",
+    "ALTA 22 — Location",
+    "ALTA 25 — Same as Survey",
+    "ALTA 28 — Easement",
+    "ALTA 32 — Construction Loan",
+    "ALTA 35 — Minerals and Other Subsurface Substances",
+    "ALTA 39 — Policy Authentication",
+    "ALTA 41 — Water — Buildings",
+    "ALTA 42 — Commercial Lender Group",
+    "ALTA 43 — Anti-Taint",
+    "ALTA 45 — Pari Passu Mortgage",
+    "ALTA 49 — Forgery — New Policy",
+    "ALTA 49.1 — Forgery — Existing Policy"
+  ];
+  var ENDORSEMENT_APPLIES_TO = ["Owner's", "Loan", "Both"];
+  var RATE_BASIS_OPTIONS = ["Regular Rate", "Reissue Rate", "Simultaneous Issue", "Short Form / Limited Coverage", "Substitution / Refinance Rate", "Other"];
+  // Reference links to underwriter/industry rate calculators, opened in a new tab so staff can look up
+  // the actual rate manually -- Genesis doesn't compute title insurance rates itself (see the panel
+  // intro on the Title Insurance Premiums screen). Cam-supplied; add more here as other underwriters'
+  // calculators come up.
+  var RATE_CALCULATOR_LINKS = [
+    { name: "Westcor (WLTIC) Rate Quote", url: "https://ratequote.wltic.com/Quote?k=Westcor-All" },
+    { name: "FNF National Rate Calculator (Chicago Title / Commonwealth / Fidelity National / National Title NY)", url: "https://ratecalculator.fnf.com/" }
+  ];
   var REQUESTED_TASK_SEEDS = [
     "Order and Publish Search Package",
     "Date Down Request",
@@ -896,6 +933,7 @@
   var DEED_FIELD_LABELS = { instrumentType: "Instrument Type", consideration: "Consideration", datedDate: "Dated Date", recordedDate: "Recorded Date", book: "Book", page: "Page", instrumentNumber: "Instrument #" };
   var DPSI_FIELD_LABELS = { instrumentType: "Instrument Type", trusteeName: "Trustee", loanAmount: "Loan Amount", datedDate: "Dated Date", recordedDate: "Recorded Date", book: "Book", page: "Page", instrumentNumber: "Instrument #" };
   var AFF_FIELD_LABELS = { type: "Type", affiant: "Affiant", datedDate: "Dated Date", recorded: "Recorded?", recordedDate: "Recorded Date", book: "Book", page: "Page", instrumentNumber: "Instrument #", notes: "Notes" };
+  var ENDORSEMENT_FIELD_LABELS = { description: "Endorsement", appliesTo: "Applies To", fee: "Fee", billCode: "Bill Code", notes: "Notes" };
 
   function logHistory(o, section, label, oldVal, newVal){
     if(String(oldVal||"") === String(newVal||"")) return;
@@ -917,7 +955,7 @@
     return snap;
   }
 
-  var state = { orders: [], saveError: null, loadError: null, currentOrderId: null, currentTab: "entry", contactDetailId: null, formDraft: {}, formPrincipals: [], formSignatureLines: [], expandedSiId: null, expandedAttId: null, editSiId: null, editLienId: null, editEmId: null, editRtId: null, editCtId: null, editAttId: null, editReqId: null, editExcId: null, editRelId: null, editDvpId: null, editDgpId: null, editCotId: null, confirmingFinalize: false, confirmingUnfinalize: false, propertySubTab: "identification", editAffId: null, confirmingFinalizeDeed: false, confirmingUnfinalizeDeed: false, editDeedSubjectToId: null, editDpgpId: null, editDpepId: null, editDeedSigLineId: null, editSimpId: null, editSiepId: null, showFirmAnalytics: false };
+  var state = { orders: [], saveError: null, loadError: null, currentOrderId: null, currentTab: "entry", contactDetailId: null, formDraft: {}, formPrincipals: [], formSignatureLines: [], expandedSiId: null, expandedAttId: null, editSiId: null, editLienId: null, editEmId: null, editRtId: null, editCtId: null, editAttId: null, editReqId: null, editExcId: null, editRelId: null, editDvpId: null, editDgpId: null, editCotId: null, confirmingFinalize: false, confirmingUnfinalize: false, propertySubTab: "identification", editAffId: null, confirmingFinalizeDeed: false, confirmingUnfinalizeDeed: false, editDeedSubjectToId: null, editDpgpId: null, editDpepId: null, editDeedSigLineId: null, editSimpId: null, editSiepId: null, showFirmAnalytics: false, editEndId: null };
 
   function normalizeOrder(o){
     if(o.settlementTime === undefined) o.settlementTime = "";
@@ -1280,6 +1318,37 @@
         if(it.sellerBeforeClosing === undefined) it.sellerBeforeClosing = "";
       });
     });
+    // Title Insurance Premiums + Endorsements (2026-08-26) -- backfill for orders saved before this pass.
+    if(!o.titlePremiums) o.titlePremiums = {
+      state: "", underwriterName: "", rateManualReference: "", rateCalculatorUrl: "",
+      agentPercent: "", underwriterPercent: "",
+      priorPolicy: { underwriterName: "", policyNumber: "", policyDate: "", policyAmount: "" },
+      commitmentFee: { amount: "", billCode: "" },
+      cpl: { amount: "", billCode: "", notes: "" },
+      ownerPolicy: { rateBasis: "", premium: "", billCode: "", notes: "" },
+      loanPolicy: { rateBasis: "", premium: "", simultaneousIssueFee: "", billCode: "", notes: "" }
+    };
+    var tp = o.titlePremiums;
+    if(tp.state === undefined) tp.state = "";
+    if(tp.underwriterName === undefined) tp.underwriterName = "";
+    if(tp.rateManualReference === undefined) tp.rateManualReference = "";
+    if(tp.rateCalculatorUrl === undefined) tp.rateCalculatorUrl = "";
+    if(tp.agentPercent === undefined) tp.agentPercent = "";
+    if(tp.underwriterPercent === undefined) tp.underwriterPercent = "";
+    if(!tp.priorPolicy) tp.priorPolicy = { underwriterName: "", policyNumber: "", policyDate: "", policyAmount: "" };
+    if(!tp.commitmentFee) tp.commitmentFee = { amount: "", billCode: "" };
+    if(!tp.cpl) tp.cpl = { amount: "", billCode: "", notes: "" };
+    if(!tp.ownerPolicy) tp.ownerPolicy = { rateBasis: "", premium: "", billCode: "", notes: "" };
+    if(!tp.loanPolicy) tp.loanPolicy = { rateBasis: "", premium: "", simultaneousIssueFee: "", billCode: "", notes: "" };
+    if(!o.endorsements) o.endorsements = [];
+    o.endorsements.forEach(function(e){
+      if(e.appliesTo === undefined) e.appliesTo = "Both";
+      if(e.fee === undefined) e.fee = "";
+      if(e.billCode === undefined) e.billCode = "";
+      if(e.notes === undefined) e.notes = "";
+      if(e.sourceType === undefined) e.sourceType = null;
+      if(e.sourceId === undefined) e.sourceId = null;
+    });
   }
 
   function load(){
@@ -1488,6 +1557,22 @@
           loanPolicy: { policyType: "", proposedInsured: "", mortgageeClause: "", coverageAmount: "" } },
         chainOfTitle: []
       },
+      // Title Insurance Premiums + Endorsements: manual-entry fields staff fill in from the firm's
+      // current rate manual or an underwriter's online rate calculator (see RATE_CALCULATOR_LINKS) --
+      // Genesis does not look up or compute rates itself. agentPercent/underwriterPercent is the
+      // Agency Agreement remittance split (applies to policy premium only, not incidental fees --
+      // matches how every reviewed rate manual scopes it); it also governs endorsement-fee remittance,
+      // noted on the Endorsements screen rather than repeated per line.
+      titlePremiums: {
+        state: "", underwriterName: "", rateManualReference: "", rateCalculatorUrl: "",
+        agentPercent: "", underwriterPercent: "",
+        priorPolicy: { underwriterName: "", policyNumber: "", policyDate: "", policyAmount: "" },
+        commitmentFee: { amount: "", billCode: "" },
+        cpl: { amount: "", billCode: "", notes: "" },
+        ownerPolicy: { rateBasis: "", premium: "", billCode: "", notes: "" },
+        loanPolicy: { rateBasis: "", premium: "", simultaneousIssueFee: "", billCode: "", notes: "" }
+      },
+      endorsements: [],
       docPrep: {
         deed: { instrumentType: "", consideration: "", datedDate: "", recordedDate: "", book: "", page: "", instrumentNumber: "",
           preparedById: "", returnToId: "", exemptionCode: "", legalAsExhibit: false, subjectTo: [], final: false, finalizedAt: null,
@@ -1807,11 +1892,11 @@
     {k:"orderInfo", label:"Order Information", group:"General"},
     {k:"contacts", label:"Contacts", group:"General"},
     {k:"property", label:"Property", group:"General"},
-    {k:"titlePremiums", label:"Title Insurance Premiums", group:"Title", placeholder:true},
+    {k:"titlePremiums", label:"Title Insurance Premiums", group:"Title"},
     {k:"prelim", label:"Prelim Title Search", group:"Title"},
     {k:"scheduleA", label:"Commitment Sch A", group:"Title"},
     {k:"commitment", label:"Commitment Sch B-I, B-II", group:"Title"},
-    {k:"endorsements", label:"Endorsements", group:"Title", placeholder:true},
+    {k:"endorsements", label:"Endorsements", group:"Title"},
     {k:"curative", label:"Curative", group:"Title"},
     {k:"docPrepDeed", label:"Deed", group:"Document Preparation"},
     {k:"docPrepSI", label:"Security Instrument", group:"Document Preparation"},
@@ -1970,11 +2055,11 @@
       else if(state.currentTab === "orderInfo") html = tplOrderInfo(o);
       else if(state.currentTab === "contacts") html = tplContacts(o);
       else if(state.currentTab === "property"){ autoFillPropertyFromEntry(o); html = tplProperty(o); }
-      else if(state.currentTab === "titlePremiums") html = tplPlaceholderScreen("Title Insurance Premiums", "Premiums, endorsement fees, and CPL fee will auto-populate here from the rate table (state/underwriter-keyed), reviewable and overridable per file before they carry onto the Commitment and CD. Not built yet — let's scope the fields and rate-table hookup next.");
+      else if(state.currentTab === "titlePremiums"){ autoFillTitlePremiums(o); html = tplTitlePremiums(o); }
       else if(state.currentTab === "prelim"){ autoFillDerivationGrantee(o); html = tplPrelim(o); }
       else if(state.currentTab === "scheduleA"){ autoFillScheduleACoverage(o); html = tplScheduleA(o); }
       else if(state.currentTab === "commitment") html = tplCommitment(o);
-      else if(state.currentTab === "endorsements") html = tplPlaceholderScreen("Endorsements", "Endorsement selection (ALTA forms, state-specific) and their premiums will live here, feeding onto the Commitment/Policy. Not built yet — let's scope the fields next.");
+      else if(state.currentTab === "endorsements") html = tplEndorsements(o);
       else if(state.currentTab === "curative") html = tplCurative(o);
       else if(state.currentTab === "docPrepDeed"){ autoFillDocPrep(o); autoFillDeedParties(o); autoFillDeedTextFields(o); html = tplDocPrepDeed(o); }
       else if(state.currentTab === "docPrepSI"){ autoFillDocPrep(o); autoFillSecurityInstrumentParties(o); html = tplDocPrepSecurityInstrument(o); }
@@ -2467,6 +2552,20 @@
     var changed = false;
     if(!sa.ownerPolicy.coverageAmount && o.purchasePrice){ sa.ownerPolicy.coverageAmount = o.purchasePrice; changed = true; }
     if(!sa.loanPolicy.coverageAmount && o.loanAmount){ sa.loanPolicy.coverageAmount = o.loanAmount; changed = true; }
+    if(changed) save();
+  }
+
+  function autoFillTitlePremiums(o){
+    // Same non-destructive fill-if-blank pattern as autoFillScheduleACoverage: State defaults from
+    // Property, Underwriter Name defaults from the file's Underwriter contact (if one exists) --
+    // never overwrites a value already typed on this screen.
+    var tp = o.titlePremiums;
+    var changed = false;
+    if(!tp.state && o.property.stateCode){ tp.state = o.property.stateCode; changed = true; }
+    if(!tp.underwriterName){
+      var uwContact = o.contacts.filter(function(c){ return c.role === "Underwriter"; })[0];
+      if(uwContact && uwContact.name){ tp.underwriterName = uwContact.name; changed = true; }
+    }
     if(changed) save();
   }
 
@@ -3674,6 +3773,211 @@
       doc;
   }
 
+  /* ---------------- Title Insurance Premiums + Endorsements ----------------
+     Manual-entry fields only -- no rate-table lookup engine. Staff price the file from the firm's
+     current rate manual (state-specific PDFs kept outside the app) or an underwriter's online rate
+     calculator (RATE_CALCULATOR_LINKS, opened in a new tab), then key the resulting numbers in here.
+     Amounts entered here become seed chips on CDF Page 2 (Sections C/H) and HUD Page 2 (Section 1100)
+     -- same dedup-by-source pattern used for Requirements/Exceptions elsewhere -- so pricing is entered
+     once and pulled onto the closing disclosure rather than retyped. */
+  function titlePremiumEndorsementCandidates(o){
+    var tp = o.titlePremiums;
+    var items = [];
+    if(tp.loanPolicy.premium) items.push({ label: "Lender's Title Insurance Premium", amount: tp.loanPolicy.premium, sourceType: "tpremium", sourceId: "loan", forLoan: true, forOwner: false });
+    if(tp.ownerPolicy.premium) items.push({ label: "Owner's Title Insurance Premium", amount: tp.ownerPolicy.premium, sourceType: "tpremium", sourceId: "owner", forLoan: false, forOwner: true });
+    if(tp.loanPolicy.simultaneousIssueFee) items.push({ label: "Simultaneous Issue Fee", amount: tp.loanPolicy.simultaneousIssueFee, sourceType: "tpremium", sourceId: "simultaneous", forLoan: true, forOwner: false });
+    if(tp.cpl.amount) items.push({ label: "Closing Protection Letter Fee", amount: tp.cpl.amount, sourceType: "tpremium", sourceId: "cpl", forLoan: true, forOwner: false });
+    if(tp.commitmentFee.amount) items.push({ label: "Title Commitment Fee", amount: tp.commitmentFee.amount, sourceType: "tpremium", sourceId: "commitment", forLoan: true, forOwner: false });
+    (o.endorsements || []).forEach(function(e){
+      if(!e.fee) return;
+      items.push({
+        label: "Endorsement: " + (e.description || "(unnamed)"), amount: e.fee, sourceType: "endorsement", sourceId: e.id,
+        forLoan: e.appliesTo === "Loan" || e.appliesTo === "Both",
+        forOwner: e.appliesTo === "Owner's" || e.appliesTo === "Both"
+      });
+    });
+    return items;
+  }
+  function premiumChipsHtml(candidates, usedSources, seedAttr){
+    return candidates.filter(function(it){ return usedSources.indexOf(it.sourceType + ":" + it.sourceId) === -1; })
+      .map(function(it){ return '<button class="seed-chip" data-' + seedAttr + '="' + it.sourceType + ':' + it.sourceId + '">+ ' + esc(it.label) + ' (' + fmtMoney(it.amount) + ')</button>'; })
+      .join("");
+  }
+  function usedSourcesOf(list){
+    return (list || []).filter(function(it){ return it.sourceType; }).map(function(it){ return it.sourceType + ":" + it.sourceId; });
+  }
+  function seedPremiumItemInto(list, cols, primaryKey, sourceKey, sectionLabel){
+    var o = currentOrder(); if(!o) return;
+    var parts = sourceKey.split(":");
+    var sourceType = parts[0], sourceId = parts.slice(1).join(":");
+    var cand = titlePremiumEndorsementCandidates(o).filter(function(c){ return c.sourceType === sourceType && c.sourceId === sourceId; })[0];
+    if(!cand) return;
+    var newItem = { id: uid(), description: cand.label, sourceType: sourceType, sourceId: sourceId };
+    cols.forEach(function(c){ newItem[c.key] = (c.key === primaryKey) ? cand.amount : ""; });
+    list.push(newItem);
+    logHistoryEvent(o, sectionLabel, "added", cand.label + " added: " + fmtMoney(cand.amount));
+    save(); renderTabPanel();
+  }
+  function titlePremiumOnlyTotal(o){
+    var tp = o.titlePremiums;
+    var n1 = parseFloat(tp.ownerPolicy.premium), n2 = parseFloat(tp.loanPolicy.premium);
+    return (isNaN(n1)?0:n1) + (isNaN(n2)?0:n2);
+  }
+  function titlePremiumsGrandTotal(o){
+    var tp = o.titlePremiums;
+    var vals = [tp.ownerPolicy.premium, tp.loanPolicy.premium, tp.loanPolicy.simultaneousIssueFee, tp.cpl.amount, tp.commitmentFee.amount];
+    return vals.reduce(function(s, v){ var n = parseFloat(v); return s + (isNaN(n)?0:n); }, 0);
+  }
+  function endorsementsTotal(o){
+    return (o.endorsements || []).reduce(function(s, e){ var n = parseFloat(e.fee); return s + (isNaN(n)?0:n); }, 0);
+  }
+  function rateCalculatorLinksHtml(){
+    return RATE_CALCULATOR_LINKS.map(function(c){
+      return '<a class="btn btn-ghost" href="' + esc(c.url) + '" target="_blank" rel="noopener" style="margin-right:8px;margin-bottom:6px;display:inline-block">' + esc(c.name) + ' &#8599;</a>';
+    }).join("");
+  }
+
+  function tplTitlePremiums(o){
+    var tp = o.titlePremiums;
+    var sa = o.commitment.scheduleA;
+    var isShortForm = o.commitment.formType === "Short Form";
+    var showOwnerPolicy = !isShortForm && (o.policyType === "Owner's" || o.policyType === "Simultaneous");
+    var showLoanPolicy = isShortForm || o.policyType === "Loan" || o.policyType === "Simultaneous";
+    var uwContact = o.contacts.filter(function(c){ return c.role === "Underwriter"; })[0];
+    var uwSeedChip = uwContact ? '<button class="seed-chip" data-seed-tp-underwriter="1">+ Copy from file Underwriter contact (' + esc(uwContact.name) + ')</button>' : '';
+
+    var premiumOnly = titlePremiumOnlyTotal(o);
+    var agentPct = parseFloat(tp.agentPercent), uwPct = parseFloat(tp.underwriterPercent);
+    var splitPreview = "";
+    if(premiumOnly > 0 && !isNaN(agentPct)){
+      splitPreview = "Agent: " + fmtMoney(premiumOnly * agentPct / 100) + (!isNaN(uwPct) ? " · Underwriter: " + fmtMoney(premiumOnly * uwPct / 100) : "") + " (of " + fmtMoney(premiumOnly) + " policy premium)";
+    }
+
+    var ownerCard = !showOwnerPolicy ? '' : '<div class="card">' +
+        '<div class="card-title">Owner\'s Policy Premium</div>' +
+        '<div class="field-grid cols-3" style="margin-top:16px">' +
+          docFact("Coverage Amount (Schedule A)", sa.ownerPolicy.coverageAmount ? fmtMoney(sa.ownerPolicy.coverageAmount) : "— set on Schedule A") +
+          field("Rate Basis", selectField("tp-owner-rateBasis", RATE_BASIS_OPTIONS, tp.ownerPolicy.rateBasis)) +
+          field("Premium", '<input type="text" id="tp-owner-premium" value="' + esc(tp.ownerPolicy.premium) + '" placeholder="0.00">') +
+          field("Bill Code", '<input type="text" id="tp-owner-billCode" value="' + esc(tp.ownerPolicy.billCode) + '">') +
+        '</div>' +
+        '<div class="field-grid" style="margin-top:4px">' +
+          field("Notes", '<input type="text" id="tp-owner-notes" value="' + esc(tp.ownerPolicy.notes) + '" placeholder="Optional">') +
+        '</div>' +
+      '</div>';
+    var loanCard = !showLoanPolicy ? '' : '<div class="card">' +
+        '<div class="card-title">Loan Policy Premium</div>' +
+        '<div class="field-grid cols-3" style="margin-top:16px">' +
+          docFact("Coverage Amount (Schedule A)", sa.loanPolicy.coverageAmount ? fmtMoney(sa.loanPolicy.coverageAmount) : "— set on Schedule A") +
+          field("Rate Basis", selectField("tp-loan-rateBasis", RATE_BASIS_OPTIONS, tp.loanPolicy.rateBasis)) +
+          field("Premium", '<input type="text" id="tp-loan-premium" value="' + esc(tp.loanPolicy.premium) + '" placeholder="0.00">') +
+          field("Simultaneous Issue Fee", '<input type="text" id="tp-loan-simultaneousIssueFee" value="' + esc(tp.loanPolicy.simultaneousIssueFee) + '" placeholder="0.00">') +
+          field("Bill Code", '<input type="text" id="tp-loan-billCode" value="' + esc(tp.loanPolicy.billCode) + '">') +
+        '</div>' +
+        '<div class="field-grid" style="margin-top:4px">' +
+          field("Notes", '<input type="text" id="tp-loan-notes" value="' + esc(tp.loanPolicy.notes) + '" placeholder="Optional">') +
+        '</div>' +
+        (o.policyType === "Simultaneous" ? '' : '<p class="field-hint" style="margin-top:10px;margin-bottom:0">Simultaneous Issue Fee only applies when Order Entry\'s Policy Type is Simultaneous — left visible either way in case that changes.</p>') +
+      '</div>';
+
+    return '<p class="panel-intro">Rates, splits, and fees are looked up manually from the firm\'s current rate manual (kept outside Genesis) or an underwriter\'s online rate calculator below, by State and Underwriter — Genesis doesn\'t compute title insurance rates itself. Enter what you find here; it flows onto the CD/HUD via the &ldquo;+&rdquo; chips on those screens\' Section C/H/1100.</p>' +
+      '<div class="card">' +
+        '<div class="card-title">Rate Lookup</div>' +
+        '<div class="field-grid cols-3" style="margin-top:16px">' +
+          field("State", '<input type="text" id="tp-state" value="' + esc(tp.state) + '" maxlength="2" placeholder="e.g. NC">') +
+          field("Underwriter", '<input type="text" id="tp-underwriterName" value="' + esc(tp.underwriterName) + '">') +
+          field("Rate Manual / Effective Date Reference", '<input type="text" id="tp-rateManualReference" value="' + esc(tp.rateManualReference) + '" placeholder="e.g. NC Title Insurance Rates, eff. 02-01-2026">') +
+        '</div>' +
+        (uwSeedChip ? '<div class="seed-picker">' + uwSeedChip + '</div>' : '') +
+        '<p class="field-hint" style="margin-top:12px;margin-bottom:4px">Underwriter rate calculators (opens in a new tab)</p>' +
+        '<div>' + rateCalculatorLinksHtml() + '</div>' +
+        '<div class="field-grid" style="margin-top:10px">' +
+          field("Other Rate Calculator / Quote Link", '<input type="text" id="tp-rateCalculatorUrl" value="' + esc(tp.rateCalculatorUrl) + '" placeholder="Paste a specific underwriter/quote link for this file">') +
+        '</div>' +
+        (tp.rateCalculatorUrl ? '<p class="field-hint" style="margin-top:-4px"><a href="' + esc(tp.rateCalculatorUrl) + '" target="_blank" rel="noopener">Open this link &#8599;</a></p>' : '') +
+        '<div class="field-grid cols-3" style="margin-top:16px">' +
+          field("Agent Split %", '<input type="text" id="tp-agentPercent" value="' + esc(tp.agentPercent) + '" placeholder="e.g. 70">') +
+          field("Underwriter Split %", '<input type="text" id="tp-underwriterPercent" value="' + esc(tp.underwriterPercent) + '" placeholder="e.g. 30">') +
+        '</div>' +
+        '<p class="field-hint" style="margin-top:8px;margin-bottom:0">Per the Agency Agreement with this Underwriter — applies to policy premium only (not CPL/Commitment fees), and to endorsement fees on the Endorsements tab as well, unless a specific endorsement\'s Notes say otherwise.' + (splitPreview ? ' <strong>' + splitPreview + '</strong>' : '') + '</p>' +
+      '</div>' +
+      '<div class="card">' +
+        '<div class="card-title">Prior Policy <span class="field-hint" style="display:inline;text-transform:none;letter-spacing:normal;font-weight:400">(for a Reissue Rate basis below)</span></div>' +
+        '<div class="field-grid cols-3" style="margin-top:16px">' +
+          field("Prior Policy Underwriter", '<input type="text" id="tp-prior-underwriterName" value="' + esc(tp.priorPolicy.underwriterName) + '">') +
+          field("Prior Policy Number", '<input type="text" id="tp-prior-policyNumber" value="' + esc(tp.priorPolicy.policyNumber) + '">') +
+          field("Prior Policy Date", '<input type="date" id="tp-prior-policyDate" value="' + esc(tp.priorPolicy.policyDate) + '">') +
+          field("Prior Policy Amount", '<input type="text" id="tp-prior-policyAmount" value="' + esc(tp.priorPolicy.policyAmount) + '" placeholder="0.00">') +
+        '</div>' +
+      '</div>' +
+      ownerCard + loanCard +
+      '<div class="card">' +
+        '<div class="card-title">Commitment Fee &amp; Closing Protection Letter (CPL)</div>' +
+        '<div class="field-grid cols-3" style="margin-top:16px">' +
+          field("Commitment Fee", '<input type="text" id="tp-commitmentFee-amount" value="' + esc(tp.commitmentFee.amount) + '" placeholder="0.00">') +
+          field("Commitment Fee Bill Code", '<input type="text" id="tp-commitmentFee-billCode" value="' + esc(tp.commitmentFee.billCode) + '">') +
+        '</div>' +
+        '<div class="field-grid cols-3" style="margin-top:10px">' +
+          field("CPL / Closing Protection Letter Fee", '<input type="text" id="tp-cpl-amount" value="' + esc(tp.cpl.amount) + '" placeholder="0.00">') +
+          field("CPL Bill Code", '<input type="text" id="tp-cpl-billCode" value="' + esc(tp.cpl.billCode) + '">') +
+          field("CPL Notes", '<input type="text" id="tp-cpl-notes" value="' + esc(tp.cpl.notes) + '" placeholder="e.g. Closing Services Insurance, per NC manual">') +
+        '</div>' +
+      '</div>' +
+      '<div class="card">' +
+        '<div class="card-title">Total Premiums &amp; Fees</div>' +
+        '<p style="font-size:20px;font-weight:600;color:var(--navy-ink);margin:8px 0 0">' + fmtMoney(titlePremiumsGrandTotal(o)) + '</p>' +
+        '<p class="field-hint" style="margin-top:6px;margin-bottom:0">Owner\'s + Loan Policy Premium, Simultaneous Issue Fee, CPL, and Commitment Fee added together — plain arithmetic, not a computed rate. Endorsement fees are tracked separately on the <a href="#" id="btn-goto-endorsements-from-premiums">Endorsements tab &rarr;</a>.</p>' +
+      '</div>';
+  }
+
+  function tplEditEndorsementForm(e){
+    var appliesToOptions = ENDORSEMENT_APPLIES_TO.map(function(a){ return '<option value="' + a + '"' + (a===e.appliesTo?" selected":"") + '>' + a + '</option>'; }).join("");
+    return '<div class="add-form" style="grid-template-columns:2fr 1fr 1fr 1fr;background:var(--paper);border-radius:8px;padding:12px 14px;margin-bottom:8px">' +
+        '<div class="field"><label>Endorsement</label><input type="text" id="eend-description-' + e.id + '" value="' + esc(e.description) + '"></div>' +
+        '<div class="field"><label>Applies To</label><select id="eend-appliesTo-' + e.id + '">' + appliesToOptions + '</select></div>' +
+        '<div class="field"><label>Fee</label><input type="text" id="eend-fee-' + e.id + '" value="' + esc(e.fee) + '" placeholder="0.00"></div>' +
+        '<div class="field"><label>Bill Code</label><input type="text" id="eend-billCode-' + e.id + '" value="' + esc(e.billCode) + '"></div>' +
+        '<div class="field" style="grid-column:span 4"><label>Notes</label><input type="text" id="eend-notes-' + e.id + '" value="' + esc(e.notes) + '"></div>' +
+      '</div>' +
+      '<div style="margin-bottom:14px">' +
+        '<button class="btn btn-primary" data-save-end="' + e.id + '">Save Changes</button> ' +
+        '<button class="btn btn-ghost" data-cancel-end="' + e.id + '">Cancel</button>' +
+      '</div>';
+  }
+
+  function tplEndorsements(o){
+    var list = o.endorsements || [];
+    var seeds = ENDORSEMENT_SEEDS.map(function(s){ return '<button class="seed-chip" data-seed-end="' + esc(s) + '">+ ' + esc(s) + '</button>'; }).join("");
+    var rows = list.length === 0 ? '<div class="empty-card">No endorsements added yet.</div>' :
+      list.map(function(e){
+        if(state.editEndId === e.id) return tplEditEndorsementForm(e);
+        var bits = [e.appliesTo ? "Applies to: " + e.appliesTo : "", e.fee ? fmtMoney(e.fee) : "", e.billCode ? "Bill Code: " + e.billCode : ""].filter(Boolean).map(esc).join(" &middot; ");
+        return recordRow(esc(e.description || "(unnamed)"), bits + (e.notes ? (bits ? " &middot; " : "") + esc(e.notes) : ""), "data-del-end", e.id, "data-edit-end", e.id);
+      }).join("");
+
+    return '<p class="panel-intro">Endorsement selection and fees, looked up manually the same way as Title Insurance Premiums — Genesis doesn\'t compute or validate endorsement availability/pricing by state or underwriter yet. Fees flow onto the CD/HUD via the &ldquo;+&rdquo; chips there, routed by Applies To (Owner\'s → Section H/HUD 1100, Loan/Both → Section C/HUD 1100).</p>' +
+      '<div class="card">' +
+        '<div class="card-title">Endorsements</div>' +
+        '<p class="field-hint" style="margin-top:0">Common ALTA forms — confirm against the current rate manual or underwriter calculator (see the <a href="#" id="btn-goto-premiums-from-endorsements">Title Insurance Premiums tab &rarr;</a>) before relying on availability or pricing.</p>' +
+        '<div class="seed-picker">' + seeds + '</div>' +
+        rows +
+        '<div class="add-form" style="grid-template-columns:2fr 1fr 1fr 1fr">' +
+          '<div class="field"><label>Endorsement</label><input type="text" id="end-description" placeholder="e.g. ALTA 8.1 — Environmental Protection Lien"></div>' +
+          '<div class="field"><label>Applies To</label><select id="end-appliesTo">' + ENDORSEMENT_APPLIES_TO.map(function(a){ return '<option value="' + a + '"' + (a==="Both"?" selected":"") + '>' + a + '</option>'; }).join("") + '</select></div>' +
+          '<div class="field"><label>Fee</label><input type="text" id="end-fee" placeholder="0.00"></div>' +
+          '<div class="field"><label>Bill Code</label><input type="text" id="end-billCode"></div>' +
+        '</div>' +
+        '<div class="add-form" style="grid-template-columns:1fr auto">' +
+          '<div class="field"><label>Notes</label><input type="text" id="end-notes" placeholder="Optional"></div>' +
+          '<div class="field"><label>&nbsp;</label><button class="btn btn-primary" id="btn-add-end">Add Endorsement</button></div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="card">' +
+        '<div class="card-title">Total Endorsement Fees</div>' +
+        '<p style="font-size:20px;font-weight:600;color:var(--navy-ink);margin:8px 0 0">' + fmtMoney(endorsementsTotal(o)) + '</p>' +
+      '</div>';
+  }
+
   function renderDocBody(o, opts){
     opts = opts || {};
     var includeJacket = opts.includeJacket !== false;
@@ -4604,11 +4908,21 @@
     var p2 = o.escrow.cdf.page2;
     var refi = cdfIsRefi(o);
     var cols = refi ? CDF_PAGE2_COLS_REFI : CDF_PAGE2_COLS_PURCHASE;
-    function sectionBlock(key, label){
-      return '<div class="cdform-row section-label">' + esc(label) + '</div>' + tplCdfLineItemTable(p2[key], cols, "cdf2" + key, "Subtotal");
+    function sectionBlock(key, label, chipsHtml){
+      return '<div class="cdform-row section-label">' + esc(label) + '</div>' +
+        (chipsHtml ? '<div class="seed-picker" style="padding:8px 12px 0">' + chipsHtml + '</div>' : '') +
+        tplCdfLineItemTable(p2[key], cols, "cdf2" + key, "Subtotal");
     }
-    var loanCosts = sectionBlock("sectionA", "A. Origination Charges") + sectionBlock("sectionB", "B. Services Borrower Did Not Shop For") + sectionBlock("sectionC", "C. Services Borrower Did Shop For");
-    var otherCosts = sectionBlock("sectionE", "E. Taxes and Other Government Fees") + sectionBlock("sectionF", "F. Prepaids") + sectionBlock("sectionG", "G. Initial Escrow Payment at Closing") + sectionBlock("sectionH", "H. Other");
+    // Title Insurance Premiums/Endorsements amounts become "+" seed chips here rather than a
+    // computed rate -- same source-dedup convention as Requirements/Exceptions. Loan-side items
+    // (forLoan) land in Section C (Services Borrower Did Shop For); Owner's-side items (forOwner)
+    // land in Section H (Other) since Page 2's Borrower-Paid columns don't have a dedicated
+    // Owner's-Policy section of their own.
+    var tpCandidates = titlePremiumEndorsementCandidates(o);
+    var cChips = premiumChipsHtml(tpCandidates.filter(function(c){ return c.forLoan; }), usedSourcesOf(p2.sectionC), "seed-cdf2sectionC");
+    var hChips = premiumChipsHtml(tpCandidates.filter(function(c){ return c.forOwner; }), usedSourcesOf(p2.sectionH), "seed-cdf2sectionH");
+    var loanCosts = sectionBlock("sectionA", "A. Origination Charges") + sectionBlock("sectionB", "B. Services Borrower Did Not Shop For") + sectionBlock("sectionC", "C. Services Borrower Did Shop For", cChips);
+    var otherCosts = sectionBlock("sectionE", "E. Taxes and Other Government Fees") + sectionBlock("sectionF", "F. Prepaids") + sectionBlock("sectionG", "G. Initial Escrow Payment at Closing") + sectionBlock("sectionH", "H. Other", hChips);
     var d = cdfLoanCostsSubtotal(p2), i = cdfOtherCostsSubtotal(p2), j = cdfBorrowerClosingCostsTotal(p2);
     return '<p class="panel-intro">Closing Disclosure &mdash; Page 2 (Closing Cost Details).' + (refi ? ' Refinance mode: Seller-Paid columns dropped (no seller on this file).' : '') + '</p>' +
       '<div class="cdform-wrap">' + cdBar("Loan Costs") + '<div class="cdform-table">' + loanCosts +
@@ -4806,8 +5120,14 @@
       {key:"section1200", label:"1200. Government Recording and Transfer Charges"},
       {key:"section1300", label:"1300. Additional Settlement Charges"}
     ];
+    // HUD lumps Owner's + Lender's title charges into one 1100 section (unlike the CDF's split
+    // Section C/H), so every Title Insurance Premiums/Endorsements candidate is offered here,
+    // deduped the same way against whatever's already been seeded into section1100.
+    var tpCandidates = titlePremiumEndorsementCandidates(o);
+    var tpChips = premiumChipsHtml(tpCandidates, usedSourcesOf(p2.section1100), "seed-hud2section1100");
     var wraps = sections.map(function(s){
       return '<div class="cdform-wrap">' + cdBar(s.label) + '<div class="cdform-table">' +
+        (s.key === "section1100" && tpChips ? '<div class="seed-picker" style="padding:8px 12px 0">' + tpChips + '</div>' : '') +
         tplCdfLineItemTable(p2[s.key], HUD_PAGE2_COLS, "hud2" + s.key, "Subtotal") +
       '</div></div>';
     }).join("");
@@ -7394,6 +7714,109 @@
       });
     });
 
+    // ============ Title Insurance Premiums ============
+    ["state","underwriterName","rateManualReference","rateCalculatorUrl","agentPercent","underwriterPercent"].forEach(function(f){
+      bindText("tp-" + f, function(v){ o.titlePremiums[f] = v; });
+    });
+    bindText("tp-prior-underwriterName", function(v){ o.titlePremiums.priorPolicy.underwriterName = v; });
+    bindText("tp-prior-policyNumber", function(v){ o.titlePremiums.priorPolicy.policyNumber = v; });
+    bindText("tp-prior-policyDate", function(v){ o.titlePremiums.priorPolicy.policyDate = v; });
+    bindText("tp-prior-policyAmount", function(v){ o.titlePremiums.priorPolicy.policyAmount = v; });
+    ["rateBasis","premium","billCode","notes"].forEach(function(f){
+      bindText("tp-owner-" + f, function(v){ o.titlePremiums.ownerPolicy[f] = v; });
+      bindText("tp-loan-" + f, function(v){ o.titlePremiums.loanPolicy[f] = v; });
+    });
+    bindText("tp-loan-simultaneousIssueFee", function(v){ o.titlePremiums.loanPolicy.simultaneousIssueFee = v; });
+    bindText("tp-commitmentFee-amount", function(v){ o.titlePremiums.commitmentFee.amount = v; });
+    bindText("tp-commitmentFee-billCode", function(v){ o.titlePremiums.commitmentFee.billCode = v; });
+    bindText("tp-cpl-amount", function(v){ o.titlePremiums.cpl.amount = v; });
+    bindText("tp-cpl-billCode", function(v){ o.titlePremiums.cpl.billCode = v; });
+    bindText("tp-cpl-notes", function(v){ o.titlePremiums.cpl.notes = v; });
+    document.querySelectorAll("[data-seed-tp-underwriter]").forEach(function(el){
+      el.addEventListener("click", function(){
+        var uwContact = o.contacts.filter(function(c){ return c.role === "Underwriter"; })[0];
+        if(!uwContact) return;
+        o.titlePremiums.underwriterName = uwContact.name;
+        logHistoryEvent(o, "Title Insurance Premiums", "milestone", "Underwriter copied from file Underwriter contact: " + uwContact.name);
+        save(); renderTabPanel();
+      });
+    });
+    var btnGotoEndFromPrem = document.getElementById("btn-goto-endorsements-from-premiums");
+    if(btnGotoEndFromPrem) btnGotoEndFromPrem.addEventListener("click", function(evt){
+      evt.preventDefault();
+      state.currentTab = "endorsements";
+      render();
+    });
+
+    // ============ Endorsements ============
+    document.querySelectorAll("[data-seed-end]").forEach(function(el){
+      el.addEventListener("click", function(){
+        var desc = el.getAttribute("data-seed-end");
+        o.endorsements.push({ id: uid(), description: desc, appliesTo: "Both", fee: "", billCode: "", notes: "" });
+        logHistoryEvent(o, "Endorsements", "added", "Endorsement added: " + desc);
+        save(); renderTabPanel();
+      });
+    });
+    var btnAddEnd = document.getElementById("btn-add-end");
+    if(btnAddEnd) btnAddEnd.addEventListener("click", function(){
+      var d = document.getElementById("end-description").value.trim();
+      if(!d) return;
+      o.endorsements.push({
+        id: uid(), description: d,
+        appliesTo: document.getElementById("end-appliesTo").value,
+        fee: document.getElementById("end-fee").value.trim(),
+        billCode: document.getElementById("end-billCode").value.trim(),
+        notes: document.getElementById("end-notes").value.trim()
+      });
+      logHistoryEvent(o, "Endorsements", "added", "Endorsement added: " + d);
+      save(); renderTabPanel();
+    });
+    document.querySelectorAll("[data-del-end]").forEach(function(el){
+      el.addEventListener("click", function(){
+        var delId = el.getAttribute("data-del-end");
+        var delE = o.endorsements.filter(function(e){ return e.id === delId; })[0];
+        o.endorsements = o.endorsements.filter(function(e){ return e.id !== delId; });
+        if(state.editEndId === delId) state.editEndId = null;
+        if(delE) logHistoryEvent(o, "Endorsements", "deleted", "Endorsement deleted: " + delE.description);
+        save(); renderTabPanel();
+      });
+    });
+    document.querySelectorAll("[data-edit-end]").forEach(function(el){
+      el.addEventListener("click", function(){
+        var id = el.getAttribute("data-edit-end");
+        state.editEndId = state.editEndId === id ? null : id;
+        renderTabPanel();
+      });
+    });
+    document.querySelectorAll("[data-cancel-end]").forEach(function(el){
+      el.addEventListener("click", function(){
+        state.editEndId = null;
+        renderTabPanel();
+      });
+    });
+    document.querySelectorAll("[data-save-end]").forEach(function(el){
+      el.addEventListener("click", function(){
+        var id = el.getAttribute("data-save-end");
+        var e = o.endorsements.filter(function(x){ return x.id === id; })[0];
+        if(!e) return;
+        var beforeEnd = snapshotFields(e, ENDORSEMENT_FIELD_LABELS);
+        e.description = fieldVal("eend-description-" + id);
+        e.appliesTo = document.getElementById("eend-appliesTo-" + id).value;
+        e.fee = fieldVal("eend-fee-" + id);
+        e.billCode = fieldVal("eend-billCode-" + id);
+        e.notes = fieldVal("eend-notes-" + id);
+        diffAndLog(o, "Endorsements", "Endorsement — " + (beforeEnd.description || e.description), beforeEnd, snapshotFields(e, ENDORSEMENT_FIELD_LABELS), ENDORSEMENT_FIELD_LABELS);
+        state.editEndId = null;
+        save(); renderTabPanel();
+      });
+    });
+    var btnGotoPremFromEnd = document.getElementById("btn-goto-premiums-from-endorsements");
+    if(btnGotoPremFromEnd) btnGotoPremFromEnd.addEventListener("click", function(evt){
+      evt.preventDefault();
+      state.currentTab = "titlePremiums";
+      render();
+    });
+
     var btnGenerate = document.getElementById("btn-generate");
     if(btnGenerate) btnGenerate.addEventListener("click", function(){
       o.commitment.generated = true;
@@ -7885,6 +8308,17 @@
     CDF_PAGE2_SECTIONS.forEach(function(k){
       wireLineItemTable(o.escrow.cdf.page2[k], "cdf2" + k, cdf2Cols);
     });
+    // Title Insurance Premiums/Endorsements seed chips -- Section C (loan-side) / Section H (owner-side)
+    document.querySelectorAll("[data-seed-cdf2sectionC]").forEach(function(el){
+      el.addEventListener("click", function(){
+        seedPremiumItemInto(o.escrow.cdf.page2.sectionC, cdf2Cols, "borrowerAtClosing", el.getAttribute("data-seed-cdf2sectionC"), "Escrow / Closing");
+      });
+    });
+    document.querySelectorAll("[data-seed-cdf2sectionH]").forEach(function(el){
+      el.addEventListener("click", function(){
+        seedPremiumItemInto(o.escrow.cdf.page2.sectionH, cdf2Cols, "borrowerAtClosing", el.getAttribute("data-seed-cdf2sectionH"), "Escrow / Closing");
+      });
+    });
 
     // CDF Page 3 -- K/L/M/N (purchase) or Payoffs and Payments (refi), plus Calculating Cash to Close
     if(cdfIsRefi(o)){
@@ -7951,6 +8385,12 @@
     // Express HUD Page 2
     ["section700","section800","section900","section1000","section1100","section1200","section1300"].forEach(function(k){
       wireLineItemTable(o.escrow.hud.page2[k], "hud2" + k, HUD_PAGE2_COLS);
+    });
+    // Title Insurance Premiums/Endorsements seed chips -- HUD lumps everything into Section 1100
+    document.querySelectorAll("[data-seed-hud2section1100]").forEach(function(el){
+      el.addEventListener("click", function(){
+        seedPremiumItemInto(o.escrow.hud.page2.section1100, HUD_PAGE2_COLS, "borrowerAmount", el.getAttribute("data-seed-hud2section1100"), "Escrow / Closing");
+      });
     });
 
     // Express HUD Page 3

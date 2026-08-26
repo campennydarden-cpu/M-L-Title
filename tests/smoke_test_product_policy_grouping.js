@@ -68,18 +68,19 @@ const { chromium } = require('playwright');
   console.log('General group\'s 4 tabs present in order (Order Entry, Order Information, Contacts, Property)?',
     JSON.stringify(tabLabels.slice(0, 4)) === JSON.stringify(["Order Entry", "Order Information", "Contacts", "Property"]));
 
-  // --- Placeholder screens ---
+  // --- Title Insurance Premiums / Endorsements (built out 2026-08-26; see
+  // smoke_test_title_premiums_endorsements.js for full field/seed-chip coverage) ---
   await page.click('[data-tab="titlePremiums"]');
   await page.waitForTimeout(150);
   panelText = await page.textContent('#tab-panel');
-  console.log('Title Insurance Premiums placeholder renders w/o error?', !panelText.includes('Something went wrong'));
-  console.log('Title Insurance Premiums shows "Coming soon"?', panelText.includes('Coming soon'));
+  console.log('Title Insurance Premiums renders w/o error?', !panelText.includes('Something went wrong'));
+  console.log('Title Insurance Premiums shows the Rate Lookup card (no longer a placeholder)?', panelText.includes('Rate Lookup'));
 
   await page.click('[data-tab="endorsements"]');
   await page.waitForTimeout(150);
   panelText = await page.textContent('#tab-panel');
-  console.log('Endorsements placeholder renders w/o error?', !panelText.includes('Something went wrong'));
-  console.log('Endorsements shows "Coming soon"?', panelText.includes('Coming soon'));
+  console.log('Endorsements renders w/o error?', !panelText.includes('Something went wrong'));
+  console.log('Endorsements shows the Endorsements card (no longer a placeholder)?', panelText.includes('Total Endorsement Fees'));
 
   // --- Renamed tabs still route correctly ---
   await page.click('[data-tab="prelim"]');
