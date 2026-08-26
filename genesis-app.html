@@ -917,7 +917,7 @@
     return snap;
   }
 
-  var state = { orders: [], saveError: null, loadError: null, currentOrderId: null, currentTab: "entry", contactDetailId: null, formDraft: {}, formPrincipals: [], formSignatureLines: [], expandedSiId: null, expandedAttId: null, editSiId: null, editLienId: null, editEmId: null, editRtId: null, editCtId: null, editAttId: null, editReqId: null, editExcId: null, editRelId: null, editDvpId: null, editDgpId: null, editCotId: null, confirmingFinalize: false, confirmingUnfinalize: false, propertySubTab: "identification", editAffId: null, confirmingFinalizeDeed: false, confirmingUnfinalizeDeed: false, editDeedSubjectToId: null, editDpgpId: null, editDpepId: null, editDeedSigLineId: null, editSimpId: null, editSiepId: null };
+  var state = { orders: [], saveError: null, loadError: null, currentOrderId: null, currentTab: "entry", contactDetailId: null, formDraft: {}, formPrincipals: [], formSignatureLines: [], expandedSiId: null, expandedAttId: null, editSiId: null, editLienId: null, editEmId: null, editRtId: null, editCtId: null, editAttId: null, editReqId: null, editExcId: null, editRelId: null, editDvpId: null, editDgpId: null, editCotId: null, confirmingFinalize: false, confirmingUnfinalize: false, propertySubTab: "identification", editAffId: null, confirmingFinalizeDeed: false, confirmingUnfinalizeDeed: false, editDeedSubjectToId: null, editDpgpId: null, editDpepId: null, editDeedSigLineId: null, editSimpId: null, editSiepId: null, showFirmAnalytics: false };
 
   function normalizeOrder(o){
     if(o.settlementTime === undefined) o.settlementTime = "";
@@ -1573,6 +1573,7 @@
     state.orders.unshift(o);
     state.currentOrderId = o.id;
     state.currentTab = "entry";
+    state.showFirmAnalytics = false;
     save();
     render();
   }
@@ -1851,7 +1852,7 @@
     var app = document.getElementById("app");
     app.innerHTML = "";
     app.appendChild(renderSidebar());
-    if(currentOrder()) app.appendChild(renderSectionNav());
+    if(currentOrder() && !state.showFirmAnalytics) app.appendChild(renderSectionNav());
     app.appendChild(renderMain());
     attachHandlers();
   }
@@ -1865,7 +1866,7 @@
       listHtml = '<div class="empty-list">No orders yet. Create your first file to get started.</div>';
     }else{
       listHtml = state.orders.map(function(o){
-        var active = o.id === state.currentOrderId ? " active" : "";
+        var active = (o.id === state.currentOrderId && !state.showFirmAnalytics) ? " active" : "";
         var addr = o.propertyAddress || "Untitled property";
         return '<li class="order-item' + active + '" data-order-id="' + o.id + '">' +
           '<div class="order-item-name">' + esc(o.fileNo) + '</div>' +
@@ -1879,6 +1880,7 @@
         '<div><div class="brand-name">Genesis</div><div class="brand-sub">M&amp;L Title &amp; Escrow</div></div>' +
       '</div>' +
       '<button class="new-order-btn" id="btn-new-order">+ New Order</button>' +
+      '<button class="sidebar-backup-btn" id="btn-firm-analytics" type="button" style="margin-top:6px' + (state.showFirmAnalytics ? ";background:var(--teal);color:#fff" : "") + '">&#128202; Firm Analytics</button>' +
       '<div class="order-list-label">Open Orders</div>' +
       '<ul class="order-list">' + listHtml + '</ul>' +
       '<button class="sidebar-backup-btn" id="btn-sidebar-backup" type="button">&#128190; Back Up Data</button>' +
@@ -1913,6 +1915,11 @@
   function renderMain(){
     var main = document.createElement("main");
     var o = currentOrder();
+
+    if(state.showFirmAnalytics){
+      main.innerHTML = tplFirmAnalytics();
+      return main;
+    }
 
     if(!o){
       main.innerHTML =
@@ -5096,6 +5103,192 @@
       '</div>';
   }
 
+  /* ---------------- Firm Analytics (2026-08-26) ----------------
+     Cross-file rollup computed purely from data already captured elsewhere (o.createdAt,
+     each order's own File History entries for Title/Escrow Status changes, and the live
+     Requirement/Exception disposition values) -- no new persisted schema needed. Answers
+     what Cam asked for: how long files spend in each stage, how curative items typically
+     resolve, and which parts of a file get revised most. Framed honestly as operational
+     analytics built on real timestamped activity -- not a formal ALTA Best Practices
+     certification -- though it's the kind of evidence that's relevant to Pillars 4
+     (Settlement Processes) and 5 (Title Opinions) if that's ever needed. */
+  function msToDays(ms){ return ms / (1000*60*60*24); }
+  function fmtDuration(ms){
+    if(ms == null || isNaN(ms)) return "—";
+    var days = msToDays(ms);
+    if(days < 1){
+      var hours = Math.max(1, Math.round(days*24));
+      return hours + (hours === 1 ? " hour" : " hours");
+    }
+    var rounded = days < 10 ? Math.round(days*10)/10 : Math.round(days);
+    return rounded + (rounded === 1 ? " day" : " days");
+  }
+
+  // Reconstructs how long each order spent in each value of a tracked status field, using
+  // that field's own History entries (already carrying an old/new value + timestamp) plus
+  // the order's createdAt as the start of its very first (default) status. One "period" per
+  // {order, status} span; ongoing:true means the order is still in that status right now.
+  function computeStatusPeriods(orders, historySection, historyLabel, initialStatus){
+    var periods = [];
+    var now = new Date();
+    orders.forEach(function(o){
+      if(!o.createdAt) return;
+      var events = [{ at: o.createdAt, status: initialStatus }];
+      (o.history || []).filter(function(h){
+        return h.kind === "changed" && h.section === historySection && h.label === historyLabel;
+      }).sort(function(a,b){ return new Date(a.at) - new Date(b.at); }).forEach(function(h){
+        events.push({ at: h.at, status: h.newValue });
+      });
+      for(var i=0;i<events.length;i++){
+        var start = new Date(events[i].at);
+        var end = events[i+1] ? new Date(events[i+1].at) : now;
+        periods.push({ fileNo: o.fileNo, status: events[i].status || "(unknown)", ms: end - start, ongoing: !events[i+1] });
+      }
+    });
+    return periods;
+  }
+
+  function summarizeStatusPeriods(periods, statusOrder){
+    var byStatus = {};
+    periods.forEach(function(p){
+      if(!byStatus[p.status]) byStatus[p.status] = { completed: [], ongoing: [] };
+      (p.ongoing ? byStatus[p.status].ongoing : byStatus[p.status].completed).push(p);
+    });
+    var statuses = statusOrder.filter(function(s){ return byStatus[s]; });
+    Object.keys(byStatus).forEach(function(s){ if(statuses.indexOf(s) === -1) statuses.push(s); });
+    return statuses.map(function(s){
+      var g = byStatus[s];
+      var avgMs = g.completed.length ? g.completed.reduce(function(sum,p){ return sum+p.ms; }, 0) / g.completed.length : null;
+      return { status: s, completedCount: g.completed.length, avgMs: avgMs, ongoing: g.ongoing.slice().sort(function(a,b){ return b.ms-a.ms; }) };
+    });
+  }
+
+  // Curative outcomes are read directly off the live Requirement/Exception records (accurate,
+  // no reconstruction needed); resolution TIME is estimated by matching each item's "added"
+  // history event to its first disposition-change event with the same kind+description --
+  // a text match, not an id, so it's a reasonable sample rather than a legal-grade audit trail.
+  function computeCurativeStats(orders){
+    var dispositionCounts = {};
+    var resolutionSamples = [];
+    orders.forEach(function(o){
+      if(!o.commitment) return;
+      var addedAt = {}, firstDispositionAt = {};
+      (o.history || []).forEach(function(h){
+        if(h.kind === "added"){
+          var ma = /^(Requirement|Exception) added: (.+)$/.exec(h.label);
+          if(ma){
+            var ka = ma[1] + "::" + ma[2];
+            if(!addedAt[ka] || new Date(h.at) < new Date(addedAt[ka])) addedAt[ka] = h.at;
+          }
+        } else if(h.kind === "changed" && h.section === "Curative" && h.newValue){
+          var md = /^(Requirement|Exception) Disposition — (.+)$/.exec(h.label);
+          if(md){
+            var kd = md[1] + "::" + md[2];
+            if(!firstDispositionAt[kd] || new Date(h.at) < new Date(firstDispositionAt[kd])) firstDispositionAt[kd] = h.at;
+          }
+        }
+      });
+      function tally(list, kind){
+        (list || []).forEach(function(item){
+          var disp = item.disposition || "(Not yet resolved)";
+          dispositionCounts[disp] = (dispositionCounts[disp] || 0) + 1;
+          var key = kind + "::" + item.description;
+          if(item.disposition && addedAt[key] && firstDispositionAt[key]){
+            resolutionSamples.push(new Date(firstDispositionAt[key]) - new Date(addedAt[key]));
+          }
+        });
+      }
+      tally(o.commitment.requirements, "Requirement");
+      tally(o.commitment.exceptions, "Exception");
+    });
+    var avgResolutionMs = resolutionSamples.length ? resolutionSamples.reduce(function(a,b){ return a+b; }, 0) / resolutionSamples.length : null;
+    return { dispositionCounts: dispositionCounts, avgResolutionMs: avgResolutionMs, resolvedCount: resolutionSamples.length };
+  }
+
+  // Which sections of a file actually get revised, firm-wide, plus a count of specific
+  // "reopened after finalized" milestones -- a reasonable proxy for rework/instability.
+  function computeChangeDrivers(orders){
+    var bySection = {};
+    var reopenCounts = { "Commitment Reverted to Draft": 0, "Clear to Close Rescinded": 0 };
+    orders.forEach(function(o){
+      (o.history || []).forEach(function(h){
+        var sec = h.section || "(unspecified)";
+        bySection[sec] = (bySection[sec] || 0) + 1;
+        if(h.kind === "milestone" && reopenCounts.hasOwnProperty(h.label)) reopenCounts[h.label]++;
+      });
+    });
+    var sections = Object.keys(bySection).map(function(s){ return { section: s, count: bySection[s] }; }).sort(function(a,b){ return b.count - a.count; });
+    return { sections: sections, reopenCounts: reopenCounts };
+  }
+
+  function tplFirmAnalytics(){
+    var orders = state.orders;
+    if(orders.length === 0){
+      return '<div class="no-order">' + MARK_SVG.replace('#4FAFA0','#3E5872').replace('#A9B9C8','#DFE5EA') +
+        '<h2>Firm Analytics</h2>' +
+        '<p>No files yet &mdash; create a few orders and this will fill in with cycle-time, curative, and activity trends across your whole book of business.</p>' +
+      '</div>';
+    }
+
+    var titlePeriods = computeStatusPeriods(orders, "Order Information", "Title Status", "In Progress");
+    var titleSummary = summarizeStatusPeriods(titlePeriods, TITLE_STATUSES.map(function(s){ return s.v; }));
+    var curative = computeCurativeStats(orders);
+    var drivers = computeChangeDrivers(orders);
+
+    var cycleRows = titleSummary.map(function(s){
+      var ongoingBit = "—";
+      if(s.ongoing.length){
+        ongoingBit = s.ongoing.length + " file" + (s.ongoing.length === 1 ? "" : "s") + " currently here";
+        if(s.ongoing[0]) ongoingBit += " (longest: " + esc(s.ongoing[0].fileNo) + ", " + fmtDuration(s.ongoing[0].ms) + ")";
+      }
+      return '<div style="display:grid;grid-template-columns:1.4fr 1fr 1fr 1.8fr;gap:10px;padding:8px 0;border-bottom:1px solid var(--hairline);font-size:13px;align-items:center">' +
+        '<div style="font-weight:600">' + esc(s.status) + '</div>' +
+        '<div>' + s.completedCount + ' completed</div>' +
+        '<div>' + (s.avgMs != null ? fmtDuration(s.avgMs) + ' avg' : '—') + '</div>' +
+        '<div style="color:var(--slate)">' + ongoingBit + '</div>' +
+      '</div>';
+    }).join("");
+
+    var dispKeys = Object.keys(curative.dispositionCounts).sort(function(a,b){ return curative.dispositionCounts[b] - curative.dispositionCounts[a]; });
+    var dispRows = dispKeys.map(function(d){
+      return '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--hairline);font-size:13px">' +
+        '<div>' + esc(d) + '</div><div style="font-weight:600">' + curative.dispositionCounts[d] + '</div>' +
+      '</div>';
+    }).join("");
+
+    var driverRows = drivers.sections.slice(0, 12).map(function(s){
+      return '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--hairline);font-size:13px">' +
+        '<div>' + esc(s.section) + '</div><div style="font-weight:600">' + s.count + '</div>' +
+      '</div>';
+    }).join("");
+
+    var reopenBits = Object.keys(drivers.reopenCounts).map(function(k){
+      return '<div style="font-size:13px;padding:4px 0">' + esc(k) + ': <strong>' + drivers.reopenCounts[k] + '</strong></div>';
+    }).join("");
+
+    return '<p class="panel-intro">Cross-file trends drawn from every order\'s own File History &mdash; real, timestamped activity, not a manually maintained summary. Useful for spotting bottlenecks internally, and as an honest record of how consistently settlement and title work followed a documented process (relevant to ALTA Best Practices Pillars 4 &amp; 5, if that\'s ever needed) &mdash; though this is operational analytics, not a formal compliance certification.</p>' +
+      '<div class="card">' +
+        '<div class="card-title">Cycle Time by Title Status &middot; ' + orders.length + ' file' + (orders.length === 1 ? '' : 's') + '</div>' +
+        '<div style="display:grid;grid-template-columns:1.4fr 1fr 1fr 1.8fr;gap:10px;padding-bottom:6px;font-size:11px;text-transform:uppercase;letter-spacing:.03em;color:var(--slate)">' +
+          '<div>Status</div><div>Completed periods</div><div>Avg. duration</div><div>Currently in this status</div>' +
+        '</div>' +
+        cycleRows +
+      '</div>' +
+      '<div class="card" style="margin-top:16px">' +
+        '<div class="card-title">Curative Patterns</div>' +
+        '<p class="field-hint" style="margin-bottom:8px">Disposition outcomes across every Requirement and Exception on file' +
+          (curative.resolvedCount ? '; average time from an item being added to its first disposition: <strong>' + fmtDuration(curative.avgResolutionMs) + '</strong> (' + curative.resolvedCount + ' resolved item' + (curative.resolvedCount === 1 ? '' : 's') + ' sampled).' : ', and how long they take to resolve once more files have curative history.') +
+        '</p>' +
+        (dispRows || '<div class="empty-card">No Requirements or Exceptions on file yet.</div>') +
+      '</div>' +
+      '<div class="card" style="margin-top:16px">' +
+        '<div class="card-title">What&rsquo;s Driving Changes</div>' +
+        '<p class="field-hint" style="margin-bottom:8px">File History entries by section, most active first &mdash; where staff time and revisions are actually going.</p>' +
+        (driverRows || '<div class="empty-card">No history recorded yet.</div>') +
+        (reopenBits ? '<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--hairline)"><div class="field-hint" style="margin-bottom:4px">Reopened-after-finalized events</div>' + reopenBits + '</div>' : '') +
+      '</div>';
+  }
+
   /* ---------------- Reusable line-item table (Escrow/Closing: CDF & HUD itemized sections) ----------------
      One generic pattern reused across every "list of {description + one or more dollar columns} with a
      computed total" section on CDF Pages 2/3 and HUD Pages 1/2 -- rather than hand-rolling ~15 near-identical
@@ -5414,10 +5607,17 @@
     var btnSidebarBackup = document.getElementById("btn-sidebar-backup");
     if(btnSidebarBackup) btnSidebarBackup.addEventListener("click", openBackupModal);
 
+    var btnFirmAnalytics = document.getElementById("btn-firm-analytics");
+    if(btnFirmAnalytics) btnFirmAnalytics.addEventListener("click", function(){
+      state.showFirmAnalytics = !state.showFirmAnalytics;
+      render();
+    });
+
     document.querySelectorAll(".order-item").forEach(function(el){
       el.addEventListener("click", function(){
         state.currentOrderId = el.getAttribute("data-order-id");
         state.currentTab = "entry";
+        state.showFirmAnalytics = false;
         state.contactDetailId = null; state.formDraft = {}; state.formPrincipals = []; state.formSignatureLines = [];
         render();
       });
