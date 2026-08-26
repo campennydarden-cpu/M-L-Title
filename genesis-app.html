@@ -464,6 +464,19 @@
   ];
   var ENDORSEMENT_APPLIES_TO = ["Owner's", "Loan", "Both"];
   var RATE_BASIS_OPTIONS = ["Regular Rate", "Reissue Rate", "Simultaneous Issue", "Short Form / Limited Coverage", "Substitution / Refinance Rate", "Other"];
+  // The rate-scenario picker on Title Insurance Premiums -- which combination of Owner's/Loan
+  // policy forms is being priced. Purely descriptive/bookkeeping (which rate-manual line the
+  // staffer looked up), not a computed rate -- same "Genesis doesn't compute rates" philosophy
+  // as the rest of this screen.
+  var TITLE_PREMIUM_RATE_SCENARIOS = [
+    "", "Simultaneous Issue - Std Owner's (Higher)/Std Loan Policy",
+    "Simultaneous Issue - Std Owner's/Std Loan (Higher) Policy",
+    "Simultaneous Issue - HO Owner's/Std Loan Policy",
+    "Simultaneous Issue - Std Owner's/EXT Loan Policy",
+    "Simultaneous Issue - HO Owner's/EXT Loan Policy",
+    "Standard Owner's Policy", "Homeowner's Policy", "Standard Loan Policy",
+    "Extended Loan Policy", "Short Form Loan Policy", "Jr. Loan Policy"
+  ];
   // Reference links to underwriter/industry rate calculators, opened in a new tab so staff can look up
   // the actual rate manually -- Genesis doesn't compute title insurance rates itself (see the panel
   // intro on the Title Insurance Premiums screen). Cam-supplied; add more here as other underwriters'
@@ -933,7 +946,7 @@
   var DEED_FIELD_LABELS = { instrumentType: "Instrument Type", consideration: "Consideration", datedDate: "Dated Date", recordedDate: "Recorded Date", book: "Book", page: "Page", instrumentNumber: "Instrument #" };
   var DPSI_FIELD_LABELS = { instrumentType: "Instrument Type", trusteeName: "Trustee", loanAmount: "Loan Amount", datedDate: "Dated Date", recordedDate: "Recorded Date", book: "Book", page: "Page", instrumentNumber: "Instrument #" };
   var AFF_FIELD_LABELS = { type: "Type", affiant: "Affiant", datedDate: "Dated Date", recorded: "Recorded?", recordedDate: "Recorded Date", book: "Book", page: "Page", instrumentNumber: "Instrument #", notes: "Notes" };
-  var ENDORSEMENT_FIELD_LABELS = { description: "Endorsement", appliesTo: "Applies To", fee: "Fee", billCode: "Bill Code", notes: "Notes" };
+  var ENDORSEMENT_FIELD_LABELS = { description: "Endorsement", appliesTo: "Applies To", fee: "Fee", billCode: "Bill Code", notes: "Notes", payor: "Payor", payee: "Payee", underwriterSplitPercent: "Underwriter Split %" };
 
   function logHistory(o, section, label, oldVal, newVal){
     if(String(oldVal||"") === String(newVal||"")) return;
@@ -1230,6 +1243,7 @@
         settlementType: "",
         options: { cdfVersion: "", hudVersion: "", signatureLinePlacement: "", notes: "" },
         charges: [], taxProrations: [], otherProrations: [],
+        recording: { documents: [], transferTaxes: [], stampTaxes: [] },
         cdf: {
           page1: {
             dateIssued: "", closingDate: "", disbursementDate: "", salePrice: "", loanAmount: "",
@@ -1331,15 +1345,53 @@
     var tp = o.titlePremiums;
     if(tp.state === undefined) tp.state = "";
     if(tp.underwriterName === undefined) tp.underwriterName = "";
+    if(tp.underwriterContactId === undefined) tp.underwriterContactId = "";
+    if(tp.rateScenario === undefined) tp.rateScenario = "";
     if(tp.rateManualReference === undefined) tp.rateManualReference = "";
     if(tp.rateCalculatorUrl === undefined) tp.rateCalculatorUrl = "";
     if(tp.agentPercent === undefined) tp.agentPercent = "";
     if(tp.underwriterPercent === undefined) tp.underwriterPercent = "";
     if(!tp.priorPolicy) tp.priorPolicy = { underwriterName: "", policyNumber: "", policyDate: "", policyAmount: "" };
-    if(!tp.commitmentFee) tp.commitmentFee = { amount: "", billCode: "" };
-    if(!tp.cpl) tp.cpl = { amount: "", billCode: "", notes: "" };
     if(!tp.ownerPolicy) tp.ownerPolicy = { rateBasis: "", premium: "", billCode: "", notes: "" };
     if(!tp.loanPolicy) tp.loanPolicy = { rateBasis: "", premium: "", simultaneousIssueFee: "", billCode: "", notes: "" };
+    if(tp.loanPolicy.cdSection === undefined) tp.loanPolicy.cdSection = "sectionC";
+    if(!tp.loanPolicy.simultaneousIssue) tp.loanPolicy.simultaneousIssue = { cdSection: "sectionC" };
+    if(tp.loanPolicy.simultaneousIssue.cdSection === undefined) tp.loanPolicy.simultaneousIssue.cdSection = "sectionC";
+    // Misc. Title Fees (2026-08-26 restructure) -- CPL/Commitment Fee used to be their own fixed
+    // fields; they're just the two most common members of an open-ended list of miscellaneous
+    // title fees now, so a one-time migration folds any pre-existing amounts into tp.miscFees.
+    if(!tp.miscFees){
+      tp.miscFees = [];
+      if(tp.commitmentFee && tp.commitmentFee.amount){
+        tp.miscFees.push({ id: uid(), description: "Title Commitment Fee", amount: tp.commitmentFee.amount, billCode: tp.commitmentFee.billCode || "", notes: "",
+          payorContactId: "", payorOther: "", payor: "", payeeContactId: "", payeeOther: "", payee: "", cdSection: "sectionC" });
+      }
+      if(tp.cpl && tp.cpl.amount){
+        tp.miscFees.push({ id: uid(), description: "Closing Protection Letter (CPL) Fee", amount: tp.cpl.amount, billCode: tp.cpl.billCode || "", notes: tp.cpl.notes || "",
+          payorContactId: "", payorOther: "", payor: "", payeeContactId: "", payeeOther: "", payee: "", cdSection: "sectionC" });
+      }
+    }
+    delete tp.commitmentFee; delete tp.cpl;
+    tp.miscFees.forEach(function(m){
+      if(m.billCode === undefined) m.billCode = "";
+      if(m.notes === undefined) m.notes = "";
+      if(m.payorContactId === undefined) m.payorContactId = "";
+      if(m.payorOther === undefined) m.payorOther = "";
+      if(m.payor === undefined) m.payor = "";
+      if(m.payeeContactId === undefined) m.payeeContactId = "";
+      if(m.payeeOther === undefined) m.payeeOther = "";
+      if(m.payee === undefined) m.payee = "";
+      if(m.cdSection === undefined) m.cdSection = "sectionC";
+    });
+    ["ownerPolicy","loanPolicy"].forEach(function(k){
+      var p = tp[k];
+      if(p.payorContactId === undefined) p.payorContactId = "";
+      if(p.payorOther === undefined) p.payorOther = "";
+      if(p.payor === undefined) p.payor = "";
+      if(p.payeeContactId === undefined) p.payeeContactId = "";
+      if(p.payeeOther === undefined) p.payeeOther = "";
+      if(p.payee === undefined) p.payee = "";
+    });
     if(!o.endorsements) o.endorsements = [];
     o.endorsements.forEach(function(e){
       if(e.appliesTo === undefined) e.appliesTo = "Both";
@@ -1348,7 +1400,50 @@
       if(e.notes === undefined) e.notes = "";
       if(e.sourceType === undefined) e.sourceType = null;
       if(e.sourceId === undefined) e.sourceId = null;
+      if(e.cdSection === undefined) e.cdSection = "sectionC";
+      if(e.underwriterSplitPercent === undefined) e.underwriterSplitPercent = "";
+      if(e.payorContactId === undefined) e.payorContactId = "";
+      if(e.payorOther === undefined) e.payorOther = "";
+      if(e.payor === undefined) e.payor = "";
+      if(e.payeeContactId === undefined) e.payeeContactId = "";
+      if(e.payeeOther === undefined) e.payeeOther = "";
+      if(e.payee === undefined) e.payee = "";
     });
+    (o.escrow.charges || []).forEach(function(c){
+      if(c.payorContactId === undefined) c.payorContactId = "";
+      if(c.payorOther === undefined) c.payorOther = "";
+      if(c.payeeContactId === undefined) c.payeeContactId = "";
+      if(c.payeeOther === undefined) c.payeeOther = "";
+      if(c.cdSection === undefined) c.cdSection = "";
+    });
+    if(!o.escrow.recording) o.escrow.recording = { documents: [], transferTaxes: [], stampTaxes: [] };
+    var rec = o.escrow.recording;
+    if(!rec.documents) rec.documents = [];
+    if(!rec.transferTaxes) rec.transferTaxes = [];
+    if(!rec.stampTaxes) rec.stampTaxes = [];
+    function backfillRecordingRow(r, isTaxRow){
+      if(r.description === undefined) r.description = "";
+      if(r.payorContactId === undefined) r.payorContactId = "";
+      if(r.payorOther === undefined) r.payorOther = "";
+      if(r.payor === undefined) r.payor = "";
+      if(r.payeeContactId === undefined) r.payeeContactId = "";
+      if(r.payeeOther === undefined) r.payeeOther = "";
+      if(r.payee === undefined) r.payee = "";
+      if(r.billCode === undefined) r.billCode = "";
+      if(r.notes === undefined) r.notes = "";
+      if(isTaxRow){
+        if(r.basisAmount === undefined) r.basisAmount = "";
+        if(r.rate === undefined) r.rate = "";
+        if(r.rateUnit === undefined) r.rateUnit = "percent";
+      } else {
+        if(r.pages === undefined) r.pages = "";
+        if(r.feePerDoc === undefined) r.feePerDoc = "";
+        if(r.feePerPage === undefined) r.feePerPage = "";
+      }
+    }
+    rec.documents.forEach(function(r){ backfillRecordingRow(r, false); });
+    rec.transferTaxes.forEach(function(r){ backfillRecordingRow(r, true); });
+    rec.stampTaxes.forEach(function(r){ backfillRecordingRow(r, true); });
   }
 
   function load(){
@@ -1564,13 +1659,12 @@
       // matches how every reviewed rate manual scopes it); it also governs endorsement-fee remittance,
       // noted on the Endorsements screen rather than repeated per line.
       titlePremiums: {
-        state: "", underwriterName: "", rateManualReference: "", rateCalculatorUrl: "",
+        state: "", underwriterName: "", underwriterContactId: "", rateScenario: "", rateManualReference: "", rateCalculatorUrl: "",
         agentPercent: "", underwriterPercent: "",
         priorPolicy: { underwriterName: "", policyNumber: "", policyDate: "", policyAmount: "" },
-        commitmentFee: { amount: "", billCode: "" },
-        cpl: { amount: "", billCode: "", notes: "" },
-        ownerPolicy: { rateBasis: "", premium: "", billCode: "", notes: "" },
-        loanPolicy: { rateBasis: "", premium: "", simultaneousIssueFee: "", billCode: "", notes: "" }
+        miscFees: [],
+        ownerPolicy: { rateBasis: "", premium: "", billCode: "", notes: "", payorContactId: "", payorOther: "", payor: "", payeeContactId: "", payeeOther: "", payee: "" },
+        loanPolicy: { rateBasis: "", premium: "", simultaneousIssueFee: "", billCode: "", notes: "", cdSection: "sectionC", simultaneousIssue: { cdSection: "sectionC" }, payorContactId: "", payorOther: "", payor: "", payeeContactId: "", payeeOther: "", payee: "" }
       },
       endorsements: [],
       docPrep: {
@@ -1591,6 +1685,7 @@
         settlementType: "",
         options: { cdfVersion: "", hudVersion: "", signatureLinePlacement: "", notes: "" },
         charges: [], taxProrations: [], otherProrations: [],
+        recording: { documents: [], transferTaxes: [], stampTaxes: [] },
         cdf: {
           page1: {
             dateIssued: "", closingDate: "", disbursementDate: "", salePrice: "", loanAmount: "",
@@ -1908,6 +2003,7 @@
     {k:"escrowCharges", label:"Additional Title/Escrow Charges", group:"Escrow / Closing"},
     {k:"escrowTaxProrations", label:"Tax Prorations", group:"Escrow / Closing"},
     {k:"escrowOtherProrations", label:"Other Prorations", group:"Escrow / Closing"},
+    {k:"escrowRecording", label:"Recording", group:"Escrow / Closing"},
     {k:"escrowCdf1", label:"CDF Page 1", group:"Escrow / Closing", family:"cdf"},
     {k:"escrowCdf2", label:"CDF Page 2", group:"Escrow / Closing", family:"cdf"},
     {k:"escrowCdf3", label:"CDF Page 3", group:"Escrow / Closing", family:"cdf"},
@@ -2071,6 +2167,7 @@
       else if(state.currentTab === "escrowCharges") html = tplEscrowCharges(o);
       else if(state.currentTab === "escrowTaxProrations") html = tplEscrowTaxProrations(o);
       else if(state.currentTab === "escrowOtherProrations") html = tplEscrowOtherProrations(o);
+      else if(state.currentTab === "escrowRecording") html = tplEscrowRecording(o);
       else if(state.currentTab === "escrowCdf1"){ autoFillEscrowCdf1(o); html = tplEscrowCdf1(o); }
       else if(state.currentTab === "escrowCdf2") html = tplEscrowCdf2(o);
       else if(state.currentTab === "escrowCdf3") html = tplEscrowCdf3(o);
@@ -3285,6 +3382,29 @@
     return "Release of " + instr + " " + parts.join(", ") + ", to be released of record prior to closing.";
   }
 
+  // Endorsements -- adding/editing/removing an endorsement keeps a linked Schedule B-II
+  // requirement in sync (sourceType:"endorsement", same convention as the SI/lien-driven
+  // requirements above), so staff never have to remember to hand-type the requirement language.
+  function endorsementRequirementText(e, o){
+    var sa = o.commitment.scheduleA;
+    var name = e.description || "(unnamed endorsement)";
+    var article = /^[aeiouAEIOU]/.test(name) ? "an" : "a";
+    var policyPhrase;
+    if(e.appliesTo === "Owner's") policyPhrase = "the final " + (sa.ownerPolicy.policyType || "Owner's") + " policy";
+    else if(e.appliesTo === "Loan") policyPhrase = "the final " + (sa.loanPolicy.policyType || "Loan") + " policy";
+    else policyPhrase = "the final " + (sa.ownerPolicy.policyType || "Owner's") + " and " + (sa.loanPolicy.policyType || "Loan") + " policies";
+    return "Company will issue " + article + " " + name + " on " + policyPhrase + ".";
+  }
+  function syncEndorsementRequirement(o, e){
+    var desc = endorsementRequirementText(e, o);
+    var existing = o.commitment.requirements.filter(function(r){ return r.sourceType === "endorsement" && r.sourceId === e.id; })[0];
+    if(existing){ existing.description = desc; }
+    else { o.commitment.requirements.push({ id: uid(), description: desc, notes: "", sourceType: "endorsement", sourceId: e.id, disposition: "", dispositionNotes: "", dontShow: false, parentReqId: null }); }
+  }
+  function removeEndorsementRequirement(o, endorsementId){
+    o.commitment.requirements = o.commitment.requirements.filter(function(r){ return !(r.sourceType === "endorsement" && r.sourceId === endorsementId); });
+  }
+
   function lienRequirementText(l){
     if(l.lienType === "Lis Pendens"){
       var lpParts = [];
@@ -3773,50 +3893,131 @@
       doc;
   }
 
-  /* ---------------- Title Insurance Premiums + Endorsements ----------------
-     Manual-entry fields only -- no rate-table lookup engine. Staff price the file from the firm's
-     current rate manual (state-specific PDFs kept outside the app) or an underwriter's online rate
-     calculator (RATE_CALCULATOR_LINKS, opened in a new tab), then key the resulting numbers in here.
-     Amounts entered here become seed chips on CDF Page 2 (Sections C/H) and HUD Page 2 (Section 1100)
-     -- same dedup-by-source pattern used for Requirements/Exceptions elsewhere -- so pricing is entered
-     once and pulled onto the closing disclosure rather than retyped. */
-  function titlePremiumEndorsementCandidates(o){
-    var tp = o.titlePremiums;
-    var items = [];
-    if(tp.loanPolicy.premium) items.push({ label: "Lender's Title Insurance Premium", amount: tp.loanPolicy.premium, sourceType: "tpremium", sourceId: "loan", forLoan: true, forOwner: false });
-    if(tp.ownerPolicy.premium) items.push({ label: "Owner's Title Insurance Premium", amount: tp.ownerPolicy.premium, sourceType: "tpremium", sourceId: "owner", forLoan: false, forOwner: true });
-    if(tp.loanPolicy.simultaneousIssueFee) items.push({ label: "Simultaneous Issue Fee", amount: tp.loanPolicy.simultaneousIssueFee, sourceType: "tpremium", sourceId: "simultaneous", forLoan: true, forOwner: false });
-    if(tp.cpl.amount) items.push({ label: "Closing Protection Letter Fee", amount: tp.cpl.amount, sourceType: "tpremium", sourceId: "cpl", forLoan: true, forOwner: false });
-    if(tp.commitmentFee.amount) items.push({ label: "Title Commitment Fee", amount: tp.commitmentFee.amount, sourceType: "tpremium", sourceId: "commitment", forLoan: true, forOwner: false });
-    (o.endorsements || []).forEach(function(e){
-      if(!e.fee) return;
-      items.push({
-        label: "Endorsement: " + (e.description || "(unnamed)"), amount: e.fee, sourceType: "endorsement", sourceId: e.id,
-        forLoan: e.appliesTo === "Loan" || e.appliesTo === "Both",
-        forOwner: e.appliesTo === "Owner's" || e.appliesTo === "Both"
-      });
+  /* ---------------- Contact selectors (Payor/Payee/Underwriter) ----------------
+     Shared by Additional Title/Escrow Charges, Title Insurance Premiums, Endorsements, and
+     Recording -- picks a name from Order Contacts instead of free-typing it, with an "Other"
+     fallback for parties not yet added as a Contact. The choice resolves into a plain-text field
+     (e.g. item.payor) so everything else that reads that field keeps working unchanged. */
+  function contactPickerField(labelText, idPrefix, contacts, contactId, otherText, roleFilter){
+    var pool = roleFilter ? contacts.filter(function(c){ return c.role === roleFilter; }) : contacts;
+    if(roleFilter && pool.length === 0) pool = contacts; // never a dead-end if nobody's tagged that role yet
+    var isOther = contactId === "__other__";
+    var opts = '<option value="">— Select —</option>' +
+      pool.map(function(c){ return '<option value="' + c.id + '"' + (c.id===contactId?" selected":"") + '>' + esc(c.name || "(unnamed)") + (c.role ? " — " + esc(c.role) : "") + '</option>'; }).join("") +
+      '<option value="__other__"' + (isOther?" selected":"") + '>Other (type name)&hellip;</option>';
+    var html = '<select id="' + idPrefix + '-contact">' + opts + '</select>' +
+      (isOther ? '<input type="text" id="' + idPrefix + '-other" value="' + esc(otherText) + '" placeholder="Type name" style="margin-top:6px">' : '');
+    return field(labelText, html);
+  }
+  // beforeChange (optional): called right before a contact-picker change is applied, e.g. so a
+  // caller with other *unsaved* Save-button-gated fields in the same form (see Endorsements' edit
+  // form) can commit them from the DOM into the data model first -- otherwise the renderTabPanel()
+  // this triggers would regenerate that form's HTML from stale data and silently discard them.
+  function bindContactPickerField(idPrefix, o, target, contactKey, otherKey, resolvedKey, beforeChange){
+    var selEl = document.getElementById(idPrefix + "-contact");
+    if(selEl) selEl.addEventListener("change", function(){
+      if(beforeChange) beforeChange();
+      target[contactKey] = selEl.value;
+      if(selEl.value === "__other__"){
+        target[resolvedKey] = target[otherKey] || "";
+      } else {
+        var c = (o.contacts||[]).filter(function(x){ return x.id === selEl.value; })[0];
+        target[resolvedKey] = c ? c.name : "";
+        target[otherKey] = "";
+      }
+      save(); renderTabPanel();
     });
-    return items;
+    var otherEl = document.getElementById(idPrefix + "-other");
+    if(otherEl) otherEl.addEventListener("change", function(){
+      if(beforeChange) beforeChange();
+      target[otherKey] = otherEl.value; target[resolvedKey] = otherEl.value; save(); renderTabPanel();
+    });
   }
-  function premiumChipsHtml(candidates, usedSources, seedAttr){
-    return candidates.filter(function(it){ return usedSources.indexOf(it.sourceType + ":" + it.sourceId) === -1; })
-      .map(function(it){ return '<button class="seed-chip" data-' + seedAttr + '="' + it.sourceType + ':' + it.sourceId + '">+ ' + esc(it.label) + ' (' + fmtMoney(it.amount) + ')</button>'; })
-      .join("");
+
+  /* ---------------- CD/HUD line assignment ----------------
+     Lets a fee entered on a source screen (Additional Title/Escrow Charges, Title Insurance
+     Premiums, Endorsements, Recording) be pushed onto the CDF's Section B/C/E/H and the matching
+     HUD section as a real line item -- either the next available line or a chosen position --
+     same source-dedup convention used for Requirements/Exceptions elsewhere (sourceType:sourceId):
+     a fee can only be assigned once, and deleting the CDF/HUD line frees it up to reassign. HUD's
+     Section 1100 (Title Charges) lumps Owner's + Lender's title-side fees together regardless of
+     which CDF section (B/C/H) they're routed to, matching HUD-1's own convention; Section E
+     (Taxes and Other Government Fees) maps to HUD's 1200 (Government Recording and Transfer
+     Charges) instead. */
+  var CD_TO_HUD_SECTION = { sectionB: "section1100", sectionC: "section1100", sectionH: "section1100", sectionE: "section1200" };
+  function numberRange(n){ var arr = []; for(var i=1;i<=n;i++) arr.push(i); return arr; }
+  function cdSectionItemCount(o, cdSection){ return (o.escrow.cdf.page2[cdSection] || []).length; }
+  function isAssignedToCdHud(o, sourceType, sourceId){
+    if(!sourceType) return false;
+    return CDF_PAGE2_SECTIONS.some(function(k){
+      return (o.escrow.cdf.page2[k] || []).some(function(it){ return it.sourceType === sourceType && it.sourceId === sourceId; });
+    });
   }
-  function usedSourcesOf(list){
-    return (list || []).filter(function(it){ return it.sourceType; }).map(function(it){ return it.sourceType + ":" + it.sourceId; });
+  function assignedCdSectionOf(o, sourceType, sourceId){
+    var found = null;
+    CDF_PAGE2_SECTIONS.forEach(function(k){
+      if((o.escrow.cdf.page2[k]||[]).some(function(it){ return it.sourceType === sourceType && it.sourceId === sourceId; })) found = k;
+    });
+    return found;
   }
-  function seedPremiumItemInto(list, cols, primaryKey, sourceKey, sectionLabel){
-    var o = currentOrder(); if(!o) return;
-    var parts = sourceKey.split(":");
-    var sourceType = parts[0], sourceId = parts.slice(1).join(":");
-    var cand = titlePremiumEndorsementCandidates(o).filter(function(c){ return c.sourceType === sourceType && c.sourceId === sourceId; })[0];
-    if(!cand) return;
-    var newItem = { id: uid(), description: cand.label, sourceType: sourceType, sourceId: sourceId };
-    cols.forEach(function(c){ newItem[c.key] = (c.key === primaryKey) ? cand.amount : ""; });
-    list.push(newItem);
-    logHistoryEvent(o, sectionLabel, "added", cand.label + " added: " + fmtMoney(cand.amount));
+  function assignItemToCdHud(o, cand, cdSection, posVal, sectionLabel){
+    if(!cdSection || isAssignedToCdHud(o, cand.sourceType, cand.sourceId)) return;
+    var cdfCols = cdfIsRefi(o) ? CDF_PAGE2_COLS_REFI : CDF_PAGE2_COLS_PURCHASE;
+    var cdfTarget = o.escrow.cdf.page2[cdSection];
+    var hudTarget = o.escrow.hud.page2[CD_TO_HUD_SECTION[cdSection]];
+    function buildItem(cols, amountKey){
+      var it = { id: uid(), description: cand.label, sourceType: cand.sourceType, sourceId: cand.sourceId };
+      cols.forEach(function(c){ it[c.key] = (c.key === amountKey) ? cand.amount : ""; });
+      return it;
+    }
+    function insertAt(arr, item){
+      if(!arr) return;
+      if(posVal === "next" || !posVal){ arr.push(item); return; }
+      var idx = parseInt(posVal, 10) - 1;
+      if(isNaN(idx) || idx < 0) idx = 0;
+      if(idx > arr.length) idx = arr.length;
+      arr.splice(idx, 0, item);
+    }
+    insertAt(cdfTarget, buildItem(cdfCols, "borrowerAtClosing"));
+    insertAt(hudTarget, buildItem(HUD_PAGE2_COLS, "borrowerAmount"));
+    logHistoryEvent(o, sectionLabel, "added", cand.label + " assigned to CD Section " + cdSection.replace("section","") + ": " + fmtMoney(cand.amount));
     save(); renderTabPanel();
+  }
+  // Renders the assignment control (or a confirmation once assigned) for one fee. sectionChoices
+  // is the list of CDF section keys the user may pick from (e.g. ["sectionB","sectionC"]); pass a
+  // single-element array to fix the section (Owner's Policy -> Section H, Recording -> Section E)
+  // and skip the dropdown.
+  function cdAssignBlock(o, idPrefix, item, sourceType, sourceId, sectionChoices){
+    if(!sourceId) return "";
+    if(isAssignedToCdHud(o, sourceType, sourceId)){
+      var foundSection = assignedCdSectionOf(o, sourceType, sourceId);
+      return '<p class="field-hint" style="margin-top:8px;color:var(--green)">&#10003; Assigned to CD Section ' + esc((foundSection||"").replace("section","")) + ' / HUD ' + esc((CD_TO_HUD_SECTION[foundSection]||"").replace("section","")) + '. Delete that line on the CD/HUD screen to reassign.</p>';
+    }
+    var cdSection = item.cdSection && sectionChoices.indexOf(item.cdSection) !== -1 ? item.cdSection : sectionChoices[0];
+    var sectionHtml = sectionChoices.length > 1 ?
+      '<select id="' + idPrefix + '-cdsection" style="margin-right:6px">' +
+        sectionChoices.map(function(s){ return '<option value="' + s + '"' + (s===cdSection?" selected":"") + '>Section ' + s.replace("section","") + '</option>'; }).join("") +
+      '</select>' : '';
+    var count = cdSectionItemCount(o, cdSection);
+    var posOpts = '<option value="next">Next available line</option>' +
+      numberRange(count+1).map(function(n){ return '<option value="' + n + '">Insert at line ' + n + '</option>'; }).join("");
+    return '<div class="cd-assign-row" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px">' +
+      sectionHtml +
+      '<select id="' + idPrefix + '-cdpos">' + posOpts + '</select>' +
+      '<button class="btn btn-secondary" data-cd-assign="' + idPrefix + '" style="font-size:11px;padding:6px 10px" data-cd-source="' + esc(sourceType) + ':' + esc(sourceId) + '">Assign to CD/HUD</button>' +
+    '</div>';
+  }
+  function wireCdAssignBlock(o, idPrefix, item, candFn, sectionLabel, sectionChoices){
+    var secEl = document.getElementById(idPrefix + "-cdsection");
+    if(secEl) secEl.addEventListener("change", function(){ item.cdSection = secEl.value; save(); renderTabPanel(); });
+    var btn = document.querySelector('[data-cd-assign="' + idPrefix + '"]');
+    if(btn) btn.addEventListener("click", function(){
+      var posEl = document.getElementById(idPrefix + "-cdpos");
+      var posVal = posEl ? posEl.value : "next";
+      var cdSection = secEl ? secEl.value :
+        (item.cdSection && sectionChoices && sectionChoices.indexOf(item.cdSection) !== -1 ? item.cdSection : (sectionChoices && sectionChoices[0]));
+      assignItemToCdHud(o, candFn(), cdSection, posVal, sectionLabel);
+    });
   }
   function titlePremiumOnlyTotal(o){
     var tp = o.titlePremiums;
@@ -3825,7 +4026,8 @@
   }
   function titlePremiumsGrandTotal(o){
     var tp = o.titlePremiums;
-    var vals = [tp.ownerPolicy.premium, tp.loanPolicy.premium, tp.loanPolicy.simultaneousIssueFee, tp.cpl.amount, tp.commitmentFee.amount];
+    var vals = [tp.ownerPolicy.premium, tp.loanPolicy.premium, tp.loanPolicy.simultaneousIssueFee];
+    (tp.miscFees || []).forEach(function(m){ vals.push(m.amount); });
     return vals.reduce(function(s, v){ var n = parseFloat(v); return s + (isNaN(n)?0:n); }, 0);
   }
   function endorsementsTotal(o){
@@ -3843,7 +4045,8 @@
     var isShortForm = o.commitment.formType === "Short Form";
     var showOwnerPolicy = !isShortForm && (o.policyType === "Owner's" || o.policyType === "Simultaneous");
     var showLoanPolicy = isShortForm || o.policyType === "Loan" || o.policyType === "Simultaneous";
-    var uwContact = o.contacts.filter(function(c){ return c.role === "Underwriter"; })[0];
+    var uwContacts = o.contacts.filter(function(c){ return c.role === "Underwriter"; });
+    var uwContact = uwContacts[0];
     var uwSeedChip = uwContact ? '<button class="seed-chip" data-seed-tp-underwriter="1">+ Copy from file Underwriter contact (' + esc(uwContact.name) + ')</button>' : '';
 
     var premiumOnly = titlePremiumOnlyTotal(o);
@@ -3861,9 +4064,13 @@
           field("Premium", '<input type="text" id="tp-owner-premium" value="' + esc(tp.ownerPolicy.premium) + '" placeholder="0.00">') +
           field("Bill Code", '<input type="text" id="tp-owner-billCode" value="' + esc(tp.ownerPolicy.billCode) + '">') +
         '</div>' +
-        '<div class="field-grid" style="margin-top:4px">' +
+        '<div class="field-grid cols-3" style="margin-top:10px">' +
+          contactPickerField("Payor", "tp-owner-payor", o.contacts, tp.ownerPolicy.payorContactId, tp.ownerPolicy.payorOther) +
+          contactPickerField("Payee", "tp-owner-payee", o.contacts, tp.ownerPolicy.payeeContactId, tp.ownerPolicy.payeeOther) +
           field("Notes", '<input type="text" id="tp-owner-notes" value="' + esc(tp.ownerPolicy.notes) + '" placeholder="Optional">') +
         '</div>' +
+        '<p class="field-hint" style="margin-top:10px;margin-bottom:0">Owner\'s Policy Premium always reports to CD Section H / HUD 1100.</p>' +
+        cdAssignBlock(o, "tp-owner-assign", tp.ownerPolicy, "tpremium", tp.ownerPolicy.premium ? "owner" : "", ["sectionH"]) +
       '</div>';
     var loanCard = !showLoanPolicy ? '' : '<div class="card">' +
         '<div class="card-title">Loan Policy Premium</div>' +
@@ -3874,19 +4081,48 @@
           field("Simultaneous Issue Fee", '<input type="text" id="tp-loan-simultaneousIssueFee" value="' + esc(tp.loanPolicy.simultaneousIssueFee) + '" placeholder="0.00">') +
           field("Bill Code", '<input type="text" id="tp-loan-billCode" value="' + esc(tp.loanPolicy.billCode) + '">') +
         '</div>' +
-        '<div class="field-grid" style="margin-top:4px">' +
+        '<div class="field-grid cols-3" style="margin-top:10px">' +
+          contactPickerField("Payor", "tp-loan-payor", o.contacts, tp.loanPolicy.payorContactId, tp.loanPolicy.payorOther) +
+          contactPickerField("Payee", "tp-loan-payee", o.contacts, tp.loanPolicy.payeeContactId, tp.loanPolicy.payeeOther) +
           field("Notes", '<input type="text" id="tp-loan-notes" value="' + esc(tp.loanPolicy.notes) + '" placeholder="Optional">') +
         '</div>' +
         (o.policyType === "Simultaneous" ? '' : '<p class="field-hint" style="margin-top:10px;margin-bottom:0">Simultaneous Issue Fee only applies when Order Entry\'s Policy Type is Simultaneous — left visible either way in case that changes.</p>') +
+        '<p class="field-hint" style="margin-top:10px;margin-bottom:0">Loan Policy Premium — reports to CD Section B or C (your choice):</p>' +
+        cdAssignBlock(o, "tp-loan-premium-assign", tp.loanPolicy, "tpremium", tp.loanPolicy.premium ? "loan" : "", ["sectionB","sectionC"]) +
+        (tp.loanPolicy.simultaneousIssueFee ? ('<p class="field-hint" style="margin-top:10px;margin-bottom:0">Simultaneous Issue Fee:</p>' +
+          cdAssignBlock(o, "tp-loan-si-assign", tp.loanPolicy.simultaneousIssue, "tpremium", "simultaneous", ["sectionB","sectionC"])) : "") +
       '</div>';
 
-    return '<p class="panel-intro">Rates, splits, and fees are looked up manually from the firm\'s current rate manual (kept outside Genesis) or an underwriter\'s online rate calculator below, by State and Underwriter — Genesis doesn\'t compute title insurance rates itself. Enter what you find here; it flows onto the CD/HUD via the &ldquo;+&rdquo; chips on those screens\' Section C/H/1100.</p>' +
+    var miscRows = (tp.miscFees || []).length === 0 ? '<div class="empty-card">No misc. title fees added yet.</div>' :
+      tp.miscFees.map(function(m){
+        return '<div class="card" style="background:var(--paper);margin-top:12px">' +
+          '<div class="field-grid cols-3">' +
+            '<div class="field"><label>Description</label><input type="text" id="tpmf-desc-' + m.id + '" value="' + esc(m.description) + '" placeholder="e.g. Commitment Fee, CPL Fee, Wire Fee"></div>' +
+            '<div class="field"><label>Amount</label><input type="text" id="tpmf-amount-' + m.id + '" value="' + esc(m.amount) + '" placeholder="0.00"></div>' +
+            '<div class="field"><label>Bill Code</label><input type="text" id="tpmf-billcode-' + m.id + '" value="' + esc(m.billCode) + '" placeholder="Optional"></div>' +
+          '</div>' +
+          '<div class="field-grid cols-3" style="margin-top:10px">' +
+            contactPickerField("Payor", "tpmf-payor-" + m.id, o.contacts, m.payorContactId, m.payorOther) +
+            contactPickerField("Payee", "tpmf-payee-" + m.id, o.contacts, m.payeeContactId, m.payeeOther) +
+            '<div class="field"><label>Notes</label><input type="text" id="tpmf-notes-' + m.id + '" value="' + esc(m.notes) + '" placeholder="Optional"></div>' +
+          '</div>' +
+          cdAssignBlock(o, "tpmf-assign-" + m.id, m, "tpmisc", m.amount ? m.id : "", ["sectionB","sectionC"]) +
+          '<div style="display:flex;justify-content:flex-end;margin-top:10px">' +
+            '<button class="icon-btn" data-del-tpmf="' + m.id + '" title="Remove">' + trashIcon() + '</button>' +
+          '</div>' +
+        '</div>';
+      }).join("");
+
+    return '<p class="panel-intro">Rates, splits, and fees are looked up manually from the firm\'s current rate manual (kept outside Genesis) or an underwriter\'s online rate calculator below, by State and Underwriter — Genesis doesn\'t compute title insurance rates itself. Assign each fee below to a CD/HUD line when it\'s ready.</p>' +
       '<div class="card">' +
         '<div class="card-title">Rate Lookup</div>' +
         '<div class="field-grid cols-3" style="margin-top:16px">' +
           field("State", '<input type="text" id="tp-state" value="' + esc(tp.state) + '" maxlength="2" placeholder="e.g. NC">') +
-          field("Underwriter", '<input type="text" id="tp-underwriterName" value="' + esc(tp.underwriterName) + '">') +
+          contactPickerField("Underwriter", "tp-underwriter", o.contacts, tp.underwriterContactId, tp.underwriterName, "Underwriter") +
           field("Rate Manual / Effective Date Reference", '<input type="text" id="tp-rateManualReference" value="' + esc(tp.rateManualReference) + '" placeholder="e.g. NC Title Insurance Rates, eff. 02-01-2026">') +
+        '</div>' +
+        '<div class="field-grid cols-3" style="margin-top:10px">' +
+          field("Policy Type / Rate Scenario", selectField("tp-rateScenario", TITLE_PREMIUM_RATE_SCENARIOS, tp.rateScenario)) +
         '</div>' +
         (uwSeedChip ? '<div class="seed-picker">' + uwSeedChip + '</div>' : '') +
         '<p class="field-hint" style="margin-top:12px;margin-bottom:4px">Underwriter rate calculators (opens in a new tab)</p>' +
@@ -3899,7 +4135,7 @@
           field("Agent Split %", '<input type="text" id="tp-agentPercent" value="' + esc(tp.agentPercent) + '" placeholder="e.g. 70">') +
           field("Underwriter Split %", '<input type="text" id="tp-underwriterPercent" value="' + esc(tp.underwriterPercent) + '" placeholder="e.g. 30">') +
         '</div>' +
-        '<p class="field-hint" style="margin-top:8px;margin-bottom:0">Per the Agency Agreement with this Underwriter — applies to policy premium only (not CPL/Commitment fees), and to endorsement fees on the Endorsements tab as well, unless a specific endorsement\'s Notes say otherwise.' + (splitPreview ? ' <strong>' + splitPreview + '</strong>' : '') + '</p>' +
+        '<p class="field-hint" style="margin-top:8px;margin-bottom:0">Per the Agency Agreement with this Underwriter — applies to policy premium only (not Misc. Title Fees), and to endorsement fees on the Endorsements tab as well unless a specific endorsement\'s own Underwriter Split overrides it.' + (splitPreview ? ' <strong>' + splitPreview + '</strong>' : '') + '</p>' +
       '</div>' +
       '<div class="card">' +
         '<div class="card-title">Prior Policy <span class="field-hint" style="display:inline;text-transform:none;letter-spacing:normal;font-weight:400">(for a Reissue Rate basis below)</span></div>' +
@@ -3912,31 +4148,28 @@
       '</div>' +
       ownerCard + loanCard +
       '<div class="card">' +
-        '<div class="card-title">Commitment Fee &amp; Closing Protection Letter (CPL)</div>' +
-        '<div class="field-grid cols-3" style="margin-top:16px">' +
-          field("Commitment Fee", '<input type="text" id="tp-commitmentFee-amount" value="' + esc(tp.commitmentFee.amount) + '" placeholder="0.00">') +
-          field("Commitment Fee Bill Code", '<input type="text" id="tp-commitmentFee-billCode" value="' + esc(tp.commitmentFee.billCode) + '">') +
-        '</div>' +
-        '<div class="field-grid cols-3" style="margin-top:10px">' +
-          field("CPL / Closing Protection Letter Fee", '<input type="text" id="tp-cpl-amount" value="' + esc(tp.cpl.amount) + '" placeholder="0.00">') +
-          field("CPL Bill Code", '<input type="text" id="tp-cpl-billCode" value="' + esc(tp.cpl.billCode) + '">') +
-          field("CPL Notes", '<input type="text" id="tp-cpl-notes" value="' + esc(tp.cpl.notes) + '" placeholder="e.g. Closing Services Insurance, per NC manual">') +
-        '</div>' +
+        '<div class="card-title">Misc. Title Fees</div>' +
+        '<p class="field-hint" style="margin-top:0">Commitment Fee, CPL, and anything else that isn\'t a policy premium — an open list rather than fixed fields, since CPL/Commitment aren\'t the only ones that show up.</p>' +
+        miscRows +
+        '<button class="btn btn-secondary" id="btn-add-tpmf" style="margin-top:12px">Add Misc. Title Fee</button>' +
       '</div>' +
       '<div class="card">' +
         '<div class="card-title">Total Premiums &amp; Fees</div>' +
         '<p style="font-size:20px;font-weight:600;color:var(--navy-ink);margin:8px 0 0">' + fmtMoney(titlePremiumsGrandTotal(o)) + '</p>' +
-        '<p class="field-hint" style="margin-top:6px;margin-bottom:0">Owner\'s + Loan Policy Premium, Simultaneous Issue Fee, CPL, and Commitment Fee added together — plain arithmetic, not a computed rate. Endorsement fees are tracked separately on the <a href="#" id="btn-goto-endorsements-from-premiums">Endorsements tab &rarr;</a>.</p>' +
+        '<p class="field-hint" style="margin-top:6px;margin-bottom:0">Owner\'s + Loan Policy Premium, Simultaneous Issue Fee, and all Misc. Title Fees added together — plain arithmetic, not a computed rate. Endorsement fees are tracked separately on the <a href="#" id="btn-goto-endorsements-from-premiums">Endorsements tab &rarr;</a>.</p>' +
       '</div>';
   }
 
-  function tplEditEndorsementForm(e){
+  function tplEditEndorsementForm(e, o){
     var appliesToOptions = ENDORSEMENT_APPLIES_TO.map(function(a){ return '<option value="' + a + '"' + (a===e.appliesTo?" selected":"") + '>' + a + '</option>'; }).join("");
     return '<div class="add-form" style="grid-template-columns:2fr 1fr 1fr 1fr;background:var(--paper);border-radius:8px;padding:12px 14px;margin-bottom:8px">' +
         '<div class="field"><label>Endorsement</label><input type="text" id="eend-description-' + e.id + '" value="' + esc(e.description) + '"></div>' +
         '<div class="field"><label>Applies To</label><select id="eend-appliesTo-' + e.id + '">' + appliesToOptions + '</select></div>' +
         '<div class="field"><label>Fee</label><input type="text" id="eend-fee-' + e.id + '" value="' + esc(e.fee) + '" placeholder="0.00"></div>' +
         '<div class="field"><label>Bill Code</label><input type="text" id="eend-billCode-' + e.id + '" value="' + esc(e.billCode) + '"></div>' +
+        contactPickerField("Payor", "eend-payor-" + e.id, o.contacts, e.payorContactId, e.payorOther) +
+        contactPickerField("Payee", "eend-payee-" + e.id, o.contacts, e.payeeContactId, e.payeeOther) +
+        '<div class="field"><label>Underwriter Split % (override)</label><input type="text" id="eend-underwriterSplitPercent-' + e.id + '" value="' + esc(e.underwriterSplitPercent) + '" placeholder="Blank = use file default"></div>' +
         '<div class="field" style="grid-column:span 4"><label>Notes</label><input type="text" id="eend-notes-' + e.id + '" value="' + esc(e.notes) + '"></div>' +
       '</div>' +
       '<div style="margin-bottom:14px">' +
@@ -3950,12 +4183,17 @@
     var seeds = ENDORSEMENT_SEEDS.map(function(s){ return '<button class="seed-chip" data-seed-end="' + esc(s) + '">+ ' + esc(s) + '</button>'; }).join("");
     var rows = list.length === 0 ? '<div class="empty-card">No endorsements added yet.</div>' :
       list.map(function(e){
-        if(state.editEndId === e.id) return tplEditEndorsementForm(e);
-        var bits = [e.appliesTo ? "Applies to: " + e.appliesTo : "", e.fee ? fmtMoney(e.fee) : "", e.billCode ? "Bill Code: " + e.billCode : ""].filter(Boolean).map(esc).join(" &middot; ");
-        return recordRow(esc(e.description || "(unnamed)"), bits + (e.notes ? (bits ? " &middot; " : "") + esc(e.notes) : ""), "data-del-end", e.id, "data-edit-end", e.id);
+        var isOwnerOnly = e.appliesTo === "Owner's";
+        var assignHtml = isOwnerOnly ?
+          '<p class="field-hint" style="margin-top:6px;margin-bottom:0">Owner\'s-applies endorsements report to CD Section H / HUD 1100.</p>' + cdAssignBlock(o, "end-assign-" + e.id, e, "endorsement", e.fee ? e.id : "", ["sectionH"]) :
+          cdAssignBlock(o, "end-assign-" + e.id, e, "endorsement", e.fee ? e.id : "", ["sectionB","sectionC"]);
+        if(state.editEndId === e.id) return tplEditEndorsementForm(e, o) + '<div style="margin:-4px 0 14px">' + assignHtml + '</div>';
+        var bits = [e.appliesTo ? "Applies to: " + e.appliesTo : "", e.fee ? fmtMoney(e.fee) : "", e.billCode ? "Bill Code: " + e.billCode : "", e.payor ? "Payor: " + e.payor : "", e.payee ? "Payee: " + e.payee : "", e.underwriterSplitPercent ? "UW Split: " + e.underwriterSplitPercent + "%" : ""].filter(Boolean).map(esc).join(" &middot; ");
+        return recordRow(esc(e.description || "(unnamed)"), bits + (e.notes ? (bits ? " &middot; " : "") + esc(e.notes) : ""), "data-del-end", e.id, "data-edit-end", e.id) +
+          '<div style="margin:-4px 0 14px">' + assignHtml + '</div>';
       }).join("");
 
-    return '<p class="panel-intro">Endorsement selection and fees, looked up manually the same way as Title Insurance Premiums — Genesis doesn\'t compute or validate endorsement availability/pricing by state or underwriter yet. Fees flow onto the CD/HUD via the &ldquo;+&rdquo; chips there, routed by Applies To (Owner\'s → Section H/HUD 1100, Loan/Both → Section C/HUD 1100).</p>' +
+    return '<p class="panel-intro">Endorsement selection and fees, looked up manually the same way as Title Insurance Premiums — Genesis doesn\'t compute or validate endorsement availability/pricing by state or underwriter yet. Adding an endorsement here automatically adds its requirement language to Commitment Schedule B-II.</p>' +
       '<div class="card">' +
         '<div class="card-title">Endorsements</div>' +
         '<p class="field-hint" style="margin-top:0">Common ALTA forms — confirm against the current rate manual or underwriter calculator (see the <a href="#" id="btn-goto-premiums-from-endorsements">Title Insurance Premiums tab &rarr;</a>) before relying on availability or pricing.</p>' +
@@ -4758,8 +4996,8 @@
             '<div class="field"><label>Bill Code</label><input type="text" id="chg-billcode-' + c.id + '" value="' + esc(c.billCode) + '" placeholder="Optional"></div>' +
           '</div>' +
           '<div class="field-grid cols-3" style="margin-top:10px">' +
-            '<div class="field"><label>Payor</label><input type="text" id="chg-payor-' + c.id + '" value="' + esc(c.payor) + '" placeholder="Who pays"></div>' +
-            '<div class="field"><label>Payee</label><input type="text" id="chg-payee-' + c.id + '" value="' + esc(c.payee) + '" placeholder="Who receives"></div>' +
+            contactPickerField("Payor", "chg-payor-" + c.id, o.contacts, c.payorContactId, c.payorOther) +
+            contactPickerField("Payee", "chg-payee-" + c.id, o.contacts, c.payeeContactId, c.payeeOther) +
             '<div class="field"><label>Buyer/Seller Split</label><input type="text" id="chg-split-' + c.id + '" value="' + esc(c.split) + '" placeholder="e.g. 50/50, Buyer 100%"></div>' +
           '</div>' +
           '<div style="display:flex;align-items:center;gap:20px;margin-top:10px">' +
@@ -4767,9 +5005,10 @@
             '<label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--slate)"><input type="checkbox" data-chg-poc="' + c.id + '"' + (c.poc?' checked':'') + '> POC</label>' +
             '<button class="icon-btn" data-del-charge="' + c.id + '" title="Remove" style="margin-left:auto">' + trashIcon() + '</button>' +
           '</div>' +
+          cdAssignBlock(o, "chg-assign-" + c.id, c, "escrowcharge", c.amount ? c.id : "", ["sectionB","sectionC","sectionH"]) +
         '</div>';
       }).join("");
-    return '<p class="panel-intro">Charges beyond the base title premium &mdash; wire fees, recording service fees, courier, etc. These don\'t flow onto the CDF/HUD itemized sections automatically yet &mdash; add the matching line there too if it needs to show on the closing form.</p>' +
+    return '<p class="panel-intro">Charges beyond the base title premium &mdash; wire fees, recording service fees, courier, etc. Assign each one to a CD/HUD line (Section B, C, or H) when it\'s ready.</p>' +
       rows +
       '<button class="btn btn-secondary" id="btn-add-charge" style="margin-top:12px">Add Charge</button>';
   }
@@ -4786,6 +5025,100 @@
     return '<p class="panel-intro">Non-tax prorations &mdash; rents, fuel, association dues billed outside the tax-proration flow, etc. Same per-diem convention as Tax Prorations.</p>' +
       rows +
       '<button class="btn btn-secondary" id="btn-add-other-proration" style="margin-top:12px">Add Other Proration</button>';
+  }
+
+  /* ---------------- Recording (2026-08-26) ----------------
+     Recording fees, transfer taxes, and stamp taxes -- plain arithmetic from manually-entered
+     rates/fees (same "Genesis doesn't compute rates" philosophy as Title Insurance Premiums), all
+     of which report to CD Section E / HUD 1200 (Government Recording and Transfer Charges). */
+  function computeRecordingDocAmount(r){
+    var flat = parseFloat(r.feePerDoc), perPage = parseFloat(r.feePerPage), pages = parseFloat(r.pages);
+    var total = (isNaN(flat)?0:flat) + (isNaN(perPage)||isNaN(pages)?0:perPage*pages);
+    return total || "";
+  }
+  function computeRecordingTaxAmount(r){
+    var basis = parseFloat(r.basisAmount), rate = parseFloat(r.rate);
+    if(isNaN(basis) || isNaN(rate)) return "";
+    return r.rateUnit === "perThousand" ? (basis / 1000) * rate : basis * (rate / 100);
+  }
+  function tplRecordingDocRow(o, r){
+    var amt = computeRecordingDocAmount(r);
+    return '<div class="card" style="background:var(--paper);margin-top:12px">' +
+      '<div class="field-grid cols-3">' +
+        '<div class="field"><label>Document</label><input type="text" id="rd-desc-' + r.id + '" value="' + esc(r.description) + '" placeholder="e.g. Deed, Deed of Trust"></div>' +
+        '<div class="field"><label>Pages</label><input type="text" id="rd-pages-' + r.id + '" value="' + esc(r.pages) + '" placeholder="0"></div>' +
+        '<div class="field"><label>Bill Code</label><input type="text" id="rd-billcode-' + r.id + '" value="' + esc(r.billCode) + '" placeholder="Optional"></div>' +
+      '</div>' +
+      '<div class="field-grid cols-3" style="margin-top:10px">' +
+        '<div class="field"><label>Flat Fee (first page)</label><input type="text" id="rd-feePerDoc-' + r.id + '" value="' + esc(r.feePerDoc) + '" placeholder="0.00"></div>' +
+        '<div class="field"><label>Fee Per Page</label><input type="text" id="rd-feePerPage-' + r.id + '" value="' + esc(r.feePerPage) + '" placeholder="0.00"></div>' +
+        docFact("Computed Amount", amt ? fmtMoney(amt) : "—") +
+      '</div>' +
+      '<div class="field-grid cols-3" style="margin-top:10px">' +
+        contactPickerField("Payor", "rd-payor-" + r.id, o.contacts, r.payorContactId, r.payorOther) +
+        contactPickerField("Payee", "rd-payee-" + r.id, o.contacts, r.payeeContactId, r.payeeOther) +
+        '<div class="field"><label>Notes</label><input type="text" id="rd-notes-' + r.id + '" value="' + esc(r.notes) + '" placeholder="Optional"></div>' +
+      '</div>' +
+      '<div style="display:flex;justify-content:flex-end;margin-top:10px"><button class="icon-btn" data-del-recdoc="' + r.id + '" title="Remove">' + trashIcon() + '</button></div>' +
+      cdAssignBlock(o, "rd-assign-" + r.id, r, "recdoc", amt ? r.id : "", ["sectionE"]) +
+    '</div>';
+  }
+  function tplRecordingTaxRow(o, r, prefix, sourceType){
+    var amt = computeRecordingTaxAmount(r);
+    return '<div class="card" style="background:var(--paper);margin-top:12px">' +
+      '<div class="field-grid cols-3">' +
+        '<div class="field"><label>Description</label><input type="text" id="' + prefix + '-desc-' + r.id + '" value="' + esc(r.description) + '" placeholder="e.g. County Transfer Tax"></div>' +
+        '<div class="field"><label>Basis Amount</label><input type="text" id="' + prefix + '-basisAmount-' + r.id + '" value="' + esc(r.basisAmount) + '" placeholder="e.g. Sale Price"></div>' +
+        '<div class="field"><label>Bill Code</label><input type="text" id="' + prefix + '-billcode-' + r.id + '" value="' + esc(r.billCode) + '" placeholder="Optional"></div>' +
+      '</div>' +
+      '<div class="field-grid cols-3" style="margin-top:10px">' +
+        '<div class="field"><label>Rate</label><input type="text" id="' + prefix + '-rate-' + r.id + '" value="' + esc(r.rate) + '" placeholder="e.g. 1"></div>' +
+        field("Rate Unit", selectField(prefix + "-rateUnit-" + r.id, ["percent","perThousand"], r.rateUnit)) +
+        docFact("Computed Amount", amt ? fmtMoney(amt) : "—") +
+      '</div>' +
+      '<div class="field-grid cols-3" style="margin-top:10px">' +
+        contactPickerField("Payor", prefix + "-payor-" + r.id, o.contacts, r.payorContactId, r.payorOther) +
+        contactPickerField("Payee", prefix + "-payee-" + r.id, o.contacts, r.payeeContactId, r.payeeOther) +
+        '<div class="field"><label>Notes</label><input type="text" id="' + prefix + '-notes-' + r.id + '" value="' + esc(r.notes) + '" placeholder="Optional"></div>' +
+      '</div>' +
+      '<div style="display:flex;justify-content:flex-end;margin-top:10px"><button class="icon-btn" data-del-' + prefix + '="' + r.id + '" title="Remove">' + trashIcon() + '</button></div>' +
+      cdAssignBlock(o, prefix + "-assign-" + r.id, r, sourceType, amt ? r.id : "", ["sectionE"]) +
+    '</div>';
+  }
+  function tplEscrowRecording(o){
+    var rec = o.escrow.recording;
+    var docRows = rec.documents.length === 0 ? '<div class="empty-card">No recorded documents yet.</div>' : rec.documents.map(function(r){ return tplRecordingDocRow(o, r); }).join("");
+    var ttRows = rec.transferTaxes.length === 0 ? '<div class="empty-card">No transfer taxes yet.</div>' : rec.transferTaxes.map(function(r){ return tplRecordingTaxRow(o, r, "rtt", "transfertax"); }).join("");
+    var stRows = rec.stampTaxes.length === 0 ? '<div class="empty-card">No stamp taxes yet.</div>' : rec.stampTaxes.map(function(r){ return tplRecordingTaxRow(o, r, "rst", "stamptax"); }).join("");
+    var docTotal = rec.documents.reduce(function(s, r){ var n = parseFloat(computeRecordingDocAmount(r)); return s + (isNaN(n)?0:n); }, 0);
+    var ttTotal = rec.transferTaxes.reduce(function(s, r){ var n = parseFloat(computeRecordingTaxAmount(r)); return s + (isNaN(n)?0:n); }, 0);
+    var stTotal = rec.stampTaxes.reduce(function(s, r){ var n = parseFloat(computeRecordingTaxAmount(r)); return s + (isNaN(n)?0:n); }, 0);
+    return '<p class="panel-intro">Recording fees, transfer taxes, and stamp taxes &mdash; plain arithmetic from rates/fees you enter (Genesis doesn\'t look up recorder or county rate schedules). Everything here reports to CD Section E / HUD 1200 (Government Recording and Transfer Charges).</p>' +
+      '<div class="card">' +
+        '<div class="card-title">Recording Fees</div>' +
+        '<p class="field-hint" style="margin-top:0">One row per recorded document (Deed, Deed of Trust, releases, etc.) — flat fee plus an optional per-page rate.</p>' +
+        docRows +
+        '<button class="btn btn-secondary" id="btn-add-recdoc" style="margin-top:12px">Add Document</button>' +
+        '<p class="field-hint" style="margin-top:10px;margin-bottom:0">Recording Fees Subtotal: <strong>' + fmtMoney(docTotal) + '</strong></p>' +
+      '</div>' +
+      '<div class="card">' +
+        '<div class="card-title">Transfer Taxes</div>' +
+        '<p class="field-hint" style="margin-top:0">Basis Amount &times; Rate (% or per $1,000) — e.g. Sale Price &times; County/State transfer tax rate.</p>' +
+        ttRows +
+        '<button class="btn btn-secondary" id="btn-add-rtt" style="margin-top:12px">Add Transfer Tax</button>' +
+        '<p class="field-hint" style="margin-top:10px;margin-bottom:0">Transfer Taxes Subtotal: <strong>' + fmtMoney(ttTotal) + '</strong></p>' +
+      '</div>' +
+      '<div class="card">' +
+        '<div class="card-title">Stamp Taxes</div>' +
+        '<p class="field-hint" style="margin-top:0">Same calculation as Transfer Taxes — kept separate since some states (e.g. excise/documentary stamps) list them as their own line.</p>' +
+        stRows +
+        '<button class="btn btn-secondary" id="btn-add-rst" style="margin-top:12px">Add Stamp Tax</button>' +
+        '<p class="field-hint" style="margin-top:10px;margin-bottom:0">Stamp Taxes Subtotal: <strong>' + fmtMoney(stTotal) + '</strong></p>' +
+      '</div>' +
+      '<div class="card">' +
+        '<div class="card-title">Total Recording &amp; Transfer Charges</div>' +
+        '<p style="font-size:20px;font-weight:600;color:var(--navy-ink);margin:8px 0 0">' + fmtMoney(docTotal + ttTotal + stTotal) + '</p>' +
+      '</div>';
   }
 
   function tplEscrowCdf1(o){
@@ -4913,16 +5246,11 @@
         (chipsHtml ? '<div class="seed-picker" style="padding:8px 12px 0">' + chipsHtml + '</div>' : '') +
         tplCdfLineItemTable(p2[key], cols, "cdf2" + key, "Subtotal");
     }
-    // Title Insurance Premiums/Endorsements amounts become "+" seed chips here rather than a
-    // computed rate -- same source-dedup convention as Requirements/Exceptions. Loan-side items
-    // (forLoan) land in Section C (Services Borrower Did Shop For); Owner's-side items (forOwner)
-    // land in Section H (Other) since Page 2's Borrower-Paid columns don't have a dedicated
-    // Owner's-Policy section of their own.
-    var tpCandidates = titlePremiumEndorsementCandidates(o);
-    var cChips = premiumChipsHtml(tpCandidates.filter(function(c){ return c.forLoan; }), usedSourcesOf(p2.sectionC), "seed-cdf2sectionC");
-    var hChips = premiumChipsHtml(tpCandidates.filter(function(c){ return c.forOwner; }), usedSourcesOf(p2.sectionH), "seed-cdf2sectionH");
-    var loanCosts = sectionBlock("sectionA", "A. Origination Charges") + sectionBlock("sectionB", "B. Services Borrower Did Not Shop For") + sectionBlock("sectionC", "C. Services Borrower Did Shop For", cChips);
-    var otherCosts = sectionBlock("sectionE", "E. Taxes and Other Government Fees") + sectionBlock("sectionF", "F. Prepaids") + sectionBlock("sectionG", "G. Initial Escrow Payment at Closing") + sectionBlock("sectionH", "H. Other", hChips);
+    // Additional Title/Escrow Charges, Title Insurance Premiums, Endorsements, and Recording are
+    // assigned onto these sections from their own source screens (a Section B/C/E/H choice plus a
+    // specific-line-or-next-available position there) rather than via a chip picker here.
+    var loanCosts = sectionBlock("sectionA", "A. Origination Charges") + sectionBlock("sectionB", "B. Services Borrower Did Not Shop For") + sectionBlock("sectionC", "C. Services Borrower Did Shop For");
+    var otherCosts = sectionBlock("sectionE", "E. Taxes and Other Government Fees") + sectionBlock("sectionF", "F. Prepaids") + sectionBlock("sectionG", "G. Initial Escrow Payment at Closing") + sectionBlock("sectionH", "H. Other");
     var d = cdfLoanCostsSubtotal(p2), i = cdfOtherCostsSubtotal(p2), j = cdfBorrowerClosingCostsTotal(p2);
     return '<p class="panel-intro">Closing Disclosure &mdash; Page 2 (Closing Cost Details).' + (refi ? ' Refinance mode: Seller-Paid columns dropped (no seller on this file).' : '') + '</p>' +
       '<div class="cdform-wrap">' + cdBar("Loan Costs") + '<div class="cdform-table">' + loanCosts +
@@ -5121,13 +5449,10 @@
       {key:"section1300", label:"1300. Additional Settlement Charges"}
     ];
     // HUD lumps Owner's + Lender's title charges into one 1100 section (unlike the CDF's split
-    // Section C/H), so every Title Insurance Premiums/Endorsements candidate is offered here,
-    // deduped the same way against whatever's already been seeded into section1100.
-    var tpCandidates = titlePremiumEndorsementCandidates(o);
-    var tpChips = premiumChipsHtml(tpCandidates, usedSourcesOf(p2.section1100), "seed-hud2section1100");
+    // Section C/H) and recording/transfer charges into 1200 -- see CD_TO_HUD_SECTION. Items land
+    // here via the Assign to CD/HUD control on their source screen, not a chip picker on this one.
     var wraps = sections.map(function(s){
       return '<div class="cdform-wrap">' + cdBar(s.label) + '<div class="cdform-table">' +
-        (s.key === "section1100" && tpChips ? '<div class="seed-picker" style="padding:8px 12px 0">' + tpChips + '</div>' : '') +
         tplCdfLineItemTable(p2[s.key], HUD_PAGE2_COLS, "hud2" + s.key, "Subtotal") +
       '</div></div>';
     }).join("");
@@ -7715,9 +8040,12 @@
     });
 
     // ============ Title Insurance Premiums ============
-    ["state","underwriterName","rateManualReference","rateCalculatorUrl","agentPercent","underwriterPercent"].forEach(function(f){
+    ["state","rateManualReference","rateCalculatorUrl","agentPercent","underwriterPercent"].forEach(function(f){
       bindText("tp-" + f, function(v){ o.titlePremiums[f] = v; });
     });
+    var tpRateScenarioEl = document.getElementById("tp-rateScenario");
+    if(tpRateScenarioEl) tpRateScenarioEl.addEventListener("change", function(){ o.titlePremiums.rateScenario = tpRateScenarioEl.value; save(); renderTabPanel(); });
+    bindContactPickerField("tp-underwriter", o, o.titlePremiums, "underwriterContactId", "underwriterName", "underwriterName");
     bindText("tp-prior-underwriterName", function(v){ o.titlePremiums.priorPolicy.underwriterName = v; });
     bindText("tp-prior-policyNumber", function(v){ o.titlePremiums.priorPolicy.policyNumber = v; });
     bindText("tp-prior-policyDate", function(v){ o.titlePremiums.priorPolicy.policyDate = v; });
@@ -7727,15 +8055,24 @@
       bindText("tp-loan-" + f, function(v){ o.titlePremiums.loanPolicy[f] = v; });
     });
     bindText("tp-loan-simultaneousIssueFee", function(v){ o.titlePremiums.loanPolicy.simultaneousIssueFee = v; });
-    bindText("tp-commitmentFee-amount", function(v){ o.titlePremiums.commitmentFee.amount = v; });
-    bindText("tp-commitmentFee-billCode", function(v){ o.titlePremiums.commitmentFee.billCode = v; });
-    bindText("tp-cpl-amount", function(v){ o.titlePremiums.cpl.amount = v; });
-    bindText("tp-cpl-billCode", function(v){ o.titlePremiums.cpl.billCode = v; });
-    bindText("tp-cpl-notes", function(v){ o.titlePremiums.cpl.notes = v; });
+    bindContactPickerField("tp-owner-payor", o, o.titlePremiums.ownerPolicy, "payorContactId", "payorOther", "payor");
+    bindContactPickerField("tp-owner-payee", o, o.titlePremiums.ownerPolicy, "payeeContactId", "payeeOther", "payee");
+    bindContactPickerField("tp-loan-payor", o, o.titlePremiums.loanPolicy, "payorContactId", "payorOther", "payor");
+    bindContactPickerField("tp-loan-payee", o, o.titlePremiums.loanPolicy, "payeeContactId", "payeeOther", "payee");
+    wireCdAssignBlock(o, "tp-owner-assign", o.titlePremiums.ownerPolicy, function(){
+      return { label: "Owner's Title Insurance Premium", amount: o.titlePremiums.ownerPolicy.premium, sourceType: "tpremium", sourceId: "owner" };
+    }, "Title Insurance Premiums", ["sectionH"]);
+    wireCdAssignBlock(o, "tp-loan-premium-assign", o.titlePremiums.loanPolicy, function(){
+      return { label: "Lender's Title Insurance Premium", amount: o.titlePremiums.loanPolicy.premium, sourceType: "tpremium", sourceId: "loan" };
+    }, "Title Insurance Premiums", ["sectionB","sectionC"]);
+    wireCdAssignBlock(o, "tp-loan-si-assign", o.titlePremiums.loanPolicy.simultaneousIssue, function(){
+      return { label: "Simultaneous Issue Fee", amount: o.titlePremiums.loanPolicy.simultaneousIssueFee, sourceType: "tpremium", sourceId: "simultaneous" };
+    }, "Title Insurance Premiums", ["sectionB","sectionC"]);
     document.querySelectorAll("[data-seed-tp-underwriter]").forEach(function(el){
       el.addEventListener("click", function(){
         var uwContact = o.contacts.filter(function(c){ return c.role === "Underwriter"; })[0];
         if(!uwContact) return;
+        o.titlePremiums.underwriterContactId = uwContact.id;
         o.titlePremiums.underwriterName = uwContact.name;
         logHistoryEvent(o, "Title Insurance Premiums", "milestone", "Underwriter copied from file Underwriter contact: " + uwContact.name);
         save(); renderTabPanel();
@@ -7748,11 +8085,38 @@
       render();
     });
 
+    // ---- Misc. Title Fees ----
+    o.titlePremiums.miscFees.forEach(function(m){
+      bindText("tpmf-desc-" + m.id, function(v){ m.description = v; });
+      bindText("tpmf-amount-" + m.id, function(v){ m.amount = v; });
+      bindText("tpmf-billcode-" + m.id, function(v){ m.billCode = v; });
+      bindText("tpmf-notes-" + m.id, function(v){ m.notes = v; });
+      bindContactPickerField("tpmf-payor-" + m.id, o, m, "payorContactId", "payorOther", "payor");
+      bindContactPickerField("tpmf-payee-" + m.id, o, m, "payeeContactId", "payeeOther", "payee");
+      wireCdAssignBlock(o, "tpmf-assign-" + m.id, m, function(){ return { label: m.description || "Misc. Title Fee", amount: m.amount, sourceType: "tpmisc", sourceId: m.id }; }, "Title Insurance Premiums", ["sectionB","sectionC"]);
+    });
+    var btnAddTpmf = document.getElementById("btn-add-tpmf");
+    if(btnAddTpmf) btnAddTpmf.addEventListener("click", function(){
+      o.titlePremiums.miscFees.push({ id: uid(), description: "", amount: "", billCode: "", notes: "",
+        payorContactId: "", payorOther: "", payor: "", payeeContactId: "", payeeOther: "", payee: "", cdSection: "sectionC" });
+      save(); renderTabPanel();
+    });
+    document.querySelectorAll("[data-del-tpmf]").forEach(function(el){
+      el.addEventListener("click", function(){
+        var delId = el.getAttribute("data-del-tpmf");
+        o.titlePremiums.miscFees = o.titlePremiums.miscFees.filter(function(m){ return m.id !== delId; });
+        save(); renderTabPanel();
+      });
+    });
+
     // ============ Endorsements ============
     document.querySelectorAll("[data-seed-end]").forEach(function(el){
       el.addEventListener("click", function(){
         var desc = el.getAttribute("data-seed-end");
-        o.endorsements.push({ id: uid(), description: desc, appliesTo: "Both", fee: "", billCode: "", notes: "" });
+        var newE = { id: uid(), description: desc, appliesTo: "Both", fee: "", billCode: "", notes: "",
+          payorContactId: "", payorOther: "", payor: "", payeeContactId: "", payeeOther: "", payee: "", underwriterSplitPercent: "", cdSection: "sectionC" };
+        o.endorsements.push(newE);
+        syncEndorsementRequirement(o, newE);
         logHistoryEvent(o, "Endorsements", "added", "Endorsement added: " + desc);
         save(); renderTabPanel();
       });
@@ -7761,13 +8125,16 @@
     if(btnAddEnd) btnAddEnd.addEventListener("click", function(){
       var d = document.getElementById("end-description").value.trim();
       if(!d) return;
-      o.endorsements.push({
+      var newE = {
         id: uid(), description: d,
         appliesTo: document.getElementById("end-appliesTo").value,
         fee: document.getElementById("end-fee").value.trim(),
         billCode: document.getElementById("end-billCode").value.trim(),
-        notes: document.getElementById("end-notes").value.trim()
-      });
+        notes: document.getElementById("end-notes").value.trim(),
+        payorContactId: "", payorOther: "", payor: "", payeeContactId: "", payeeOther: "", payee: "", underwriterSplitPercent: "", cdSection: "sectionC"
+      };
+      o.endorsements.push(newE);
+      syncEndorsementRequirement(o, newE);
       logHistoryEvent(o, "Endorsements", "added", "Endorsement added: " + d);
       save(); renderTabPanel();
     });
@@ -7776,6 +8143,7 @@
         var delId = el.getAttribute("data-del-end");
         var delE = o.endorsements.filter(function(e){ return e.id === delId; })[0];
         o.endorsements = o.endorsements.filter(function(e){ return e.id !== delId; });
+        removeEndorsementRequirement(o, delId);
         if(state.editEndId === delId) state.editEndId = null;
         if(delE) logHistoryEvent(o, "Endorsements", "deleted", "Endorsement deleted: " + delE.description);
         save(); renderTabPanel();
@@ -7794,21 +8162,40 @@
         renderTabPanel();
       });
     });
+    // Commits the endorsement edit form's Save-button-gated fields (description/appliesTo/fee/
+    // billCode/notes/underwriterSplitPercent) from the DOM into `e`. Called by the Save button
+    // itself, and also by the Payor/Payee contact pickers below (which apply and re-render
+    // immediately) so that switching a contact mid-edit never discards the other fields the user
+    // already typed but hasn't clicked Save on yet. No-ops if this endorsement isn't the one
+    // currently open for editing (its inputs aren't in the DOM).
+    function commitEndEditFields(e){
+      var id = e.id;
+      var descEl = document.getElementById("eend-description-" + id);
+      if(!descEl) return;
+      e.description = fieldVal("eend-description-" + id);
+      e.appliesTo = document.getElementById("eend-appliesTo-" + id).value;
+      e.fee = fieldVal("eend-fee-" + id);
+      e.billCode = fieldVal("eend-billCode-" + id);
+      e.notes = fieldVal("eend-notes-" + id);
+      e.underwriterSplitPercent = fieldVal("eend-underwriterSplitPercent-" + id);
+    }
     document.querySelectorAll("[data-save-end]").forEach(function(el){
       el.addEventListener("click", function(){
         var id = el.getAttribute("data-save-end");
         var e = o.endorsements.filter(function(x){ return x.id === id; })[0];
         if(!e) return;
         var beforeEnd = snapshotFields(e, ENDORSEMENT_FIELD_LABELS);
-        e.description = fieldVal("eend-description-" + id);
-        e.appliesTo = document.getElementById("eend-appliesTo-" + id).value;
-        e.fee = fieldVal("eend-fee-" + id);
-        e.billCode = fieldVal("eend-billCode-" + id);
-        e.notes = fieldVal("eend-notes-" + id);
+        commitEndEditFields(e);
         diffAndLog(o, "Endorsements", "Endorsement — " + (beforeEnd.description || e.description), beforeEnd, snapshotFields(e, ENDORSEMENT_FIELD_LABELS), ENDORSEMENT_FIELD_LABELS);
+        syncEndorsementRequirement(o, e);
         state.editEndId = null;
         save(); renderTabPanel();
       });
+    });
+    o.endorsements.forEach(function(e){
+      bindContactPickerField("eend-payor-" + e.id, o, e, "payorContactId", "payorOther", "payor", function(){ commitEndEditFields(e); });
+      bindContactPickerField("eend-payee-" + e.id, o, e, "payeeContactId", "payeeOther", "payee", function(){ commitEndEditFields(e); });
+      wireCdAssignBlock(o, "end-assign-" + e.id, e, function(){ return { label: "Endorsement: " + (e.description || "(unnamed)"), amount: e.fee, sourceType: "endorsement", sourceId: e.id }; }, "Endorsements", e.appliesTo === "Owner's" ? ["sectionH"] : ["sectionB","sectionC"]);
     });
     var btnGotoPremFromEnd = document.getElementById("btn-goto-premiums-from-endorsements");
     if(btnGotoPremFromEnd) btnGotoPremFromEnd.addEventListener("click", function(evt){
@@ -8207,8 +8594,8 @@
 
     // Additional Title/Escrow Charges -- always-editable rows, direct push/splice on o.escrow.charges
     o.escrow.charges.forEach(function(c){
-      ["desc","amount","billcode","payor","payee","split"].forEach(function(f){
-        var propMap = { desc:"description", amount:"amount", billcode:"billCode", payor:"payor", payee:"payee", split:"split" };
+      ["desc","amount","billcode","split"].forEach(function(f){
+        var propMap = { desc:"description", amount:"amount", billcode:"billCode", split:"split" };
         var el = document.getElementById("chg-" + f + "-" + c.id);
         if(!el) return;
         function commit(){ c[propMap[f]] = el.value; save(); }
@@ -8219,10 +8606,15 @@
       if(passEl) passEl.addEventListener("change", function(){ c.passThrough = passEl.checked; save(); });
       var pocEl = document.querySelector('[data-chg-poc="' + c.id + '"]');
       if(pocEl) pocEl.addEventListener("change", function(){ c.poc = pocEl.checked; save(); });
+      bindContactPickerField("chg-payor-" + c.id, o, c, "payorContactId", "payorOther", "payor");
+      bindContactPickerField("chg-payee-" + c.id, o, c, "payeeContactId", "payeeOther", "payee");
+      wireCdAssignBlock(o, "chg-assign-" + c.id, c, function(){ return { label: c.description || "Additional Charge", amount: c.amount, sourceType: "escrowcharge", sourceId: c.id }; }, "Escrow / Closing", ["sectionB","sectionC","sectionH"]);
     });
     var btnAddCharge = document.getElementById("btn-add-charge");
     if(btnAddCharge) btnAddCharge.addEventListener("click", function(){
-      o.escrow.charges.push({ id: uid(), description: "", amount: "", billCode: "", payor: "", payee: "", split: "", passThrough: false, poc: false });
+      o.escrow.charges.push({ id: uid(), description: "", amount: "", billCode: "",
+        payorContactId: "", payorOther: "", payor: "", payeeContactId: "", payeeOther: "", payee: "",
+        split: "", passThrough: false, poc: false, cdSection: "" });
       save(); renderTabPanel();
     });
     document.querySelectorAll("[data-del-charge]").forEach(function(el){
@@ -8246,6 +8638,65 @@
       o.escrow.otherProrations.push({ id: uid(), description: "", annualAmount: "", periodStart: "", periodEnd: "", prorationDate: "", paidInAdvance: false });
       save(); renderTabPanel();
     });
+
+    // Recording -- Recording Fees / Transfer Taxes / Stamp Taxes, all reporting to CD Section E / HUD 1200
+    (function(){
+      var rec = o.escrow.recording;
+      function wireDocRow(r){
+        ["desc","pages","billcode","feePerDoc","feePerPage","notes"].forEach(function(f){
+          var propMap = { desc:"description", pages:"pages", billcode:"billCode", feePerDoc:"feePerDoc", feePerPage:"feePerPage", notes:"notes" };
+          var el = document.getElementById("rd-" + f + "-" + r.id);
+          if(!el) return;
+          el.addEventListener("change", function(){ r[propMap[f]] = el.value; save(); renderTabPanel(); });
+        });
+        bindContactPickerField("rd-payor-" + r.id, o, r, "payorContactId", "payorOther", "payor");
+        bindContactPickerField("rd-payee-" + r.id, o, r, "payeeContactId", "payeeOther", "payee");
+        wireCdAssignBlock(o, "rd-assign-" + r.id, r, function(){ return { label: "Recording Fee: " + (r.description || "Document"), amount: computeRecordingDocAmount(r), sourceType: "recdoc", sourceId: r.id }; }, "Escrow / Closing", ["sectionE"]);
+      }
+      function wireTaxRow(r, prefix, sourceType){
+        ["desc","basisAmount","billcode","rate","notes"].forEach(function(f){
+          var propMap = { desc:"description", basisAmount:"basisAmount", billcode:"billCode", rate:"rate", notes:"notes" };
+          var el = document.getElementById(prefix + "-" + f + "-" + r.id);
+          if(!el) return;
+          el.addEventListener("change", function(){ r[propMap[f]] = el.value; save(); renderTabPanel(); });
+        });
+        var rateUnitEl = document.getElementById(prefix + "-rateUnit-" + r.id);
+        if(rateUnitEl) rateUnitEl.addEventListener("change", function(){ r.rateUnit = rateUnitEl.value; save(); renderTabPanel(); });
+        bindContactPickerField(prefix + "-payor-" + r.id, o, r, "payorContactId", "payorOther", "payor");
+        bindContactPickerField(prefix + "-payee-" + r.id, o, r, "payeeContactId", "payeeOther", "payee");
+        wireCdAssignBlock(o, prefix + "-assign-" + r.id, r, function(){ return { label: (sourceType === "transfertax" ? "Transfer Tax: " : "Stamp Tax: ") + (r.description || "Tax"), amount: computeRecordingTaxAmount(r), sourceType: sourceType, sourceId: r.id }; }, "Escrow / Closing", ["sectionE"]);
+      }
+      rec.documents.forEach(wireDocRow);
+      rec.transferTaxes.forEach(function(r){ wireTaxRow(r, "rtt", "transfertax"); });
+      rec.stampTaxes.forEach(function(r){ wireTaxRow(r, "rst", "stamptax"); });
+      var btnAddRecDoc = document.getElementById("btn-add-recdoc");
+      if(btnAddRecDoc) btnAddRecDoc.addEventListener("click", function(){
+        rec.documents.push({ id: uid(), description: "", pages: "", feePerDoc: "", feePerPage: "", billCode: "", notes: "",
+          payorContactId: "", payorOther: "", payor: "", payeeContactId: "", payeeOther: "", payee: "", cdSection: "sectionE" });
+        save(); renderTabPanel();
+      });
+      var btnAddRtt = document.getElementById("btn-add-rtt");
+      if(btnAddRtt) btnAddRtt.addEventListener("click", function(){
+        rec.transferTaxes.push({ id: uid(), description: "", basisAmount: "", rate: "", rateUnit: "percent", billCode: "", notes: "",
+          payorContactId: "", payorOther: "", payor: "", payeeContactId: "", payeeOther: "", payee: "", cdSection: "sectionE" });
+        save(); renderTabPanel();
+      });
+      var btnAddRst = document.getElementById("btn-add-rst");
+      if(btnAddRst) btnAddRst.addEventListener("click", function(){
+        rec.stampTaxes.push({ id: uid(), description: "", basisAmount: "", rate: "", rateUnit: "percent", billCode: "", notes: "",
+          payorContactId: "", payorOther: "", payor: "", payeeContactId: "", payeeOther: "", payee: "", cdSection: "sectionE" });
+        save(); renderTabPanel();
+      });
+      document.querySelectorAll("[data-del-recdoc]").forEach(function(el){
+        el.addEventListener("click", function(){ var id = el.getAttribute("data-del-recdoc"); rec.documents = rec.documents.filter(function(r){ return r.id !== id; }); save(); renderTabPanel(); });
+      });
+      document.querySelectorAll("[data-del-rtt]").forEach(function(el){
+        el.addEventListener("click", function(){ var id = el.getAttribute("data-del-rtt"); rec.transferTaxes = rec.transferTaxes.filter(function(r){ return r.id !== id; }); save(); renderTabPanel(); });
+      });
+      document.querySelectorAll("[data-del-rst]").forEach(function(el){
+        el.addEventListener("click", function(){ var id = el.getAttribute("data-del-rst"); rec.stampTaxes = rec.stampTaxes.filter(function(r){ return r.id !== id; }); save(); renderTabPanel(); });
+      });
+    })();
 
     // CDF Page 1
     bindText("cdf1-dateIssued", function(v){ o.escrow.cdf.page1.dateIssued = v; });
@@ -8308,18 +8759,6 @@
     CDF_PAGE2_SECTIONS.forEach(function(k){
       wireLineItemTable(o.escrow.cdf.page2[k], "cdf2" + k, cdf2Cols);
     });
-    // Title Insurance Premiums/Endorsements seed chips -- Section C (loan-side) / Section H (owner-side)
-    document.querySelectorAll("[data-seed-cdf2sectionC]").forEach(function(el){
-      el.addEventListener("click", function(){
-        seedPremiumItemInto(o.escrow.cdf.page2.sectionC, cdf2Cols, "borrowerAtClosing", el.getAttribute("data-seed-cdf2sectionC"), "Escrow / Closing");
-      });
-    });
-    document.querySelectorAll("[data-seed-cdf2sectionH]").forEach(function(el){
-      el.addEventListener("click", function(){
-        seedPremiumItemInto(o.escrow.cdf.page2.sectionH, cdf2Cols, "borrowerAtClosing", el.getAttribute("data-seed-cdf2sectionH"), "Escrow / Closing");
-      });
-    });
-
     // CDF Page 3 -- K/L/M/N (purchase) or Payoffs and Payments (refi), plus Calculating Cash to Close
     if(cdfIsRefi(o)){
       wireLineItemTable(o.escrow.cdf.page3.payoffsAndPayments, "cdf3payoffs", CDF_PAGE3_COLS);
@@ -8386,13 +8825,6 @@
     ["section700","section800","section900","section1000","section1100","section1200","section1300"].forEach(function(k){
       wireLineItemTable(o.escrow.hud.page2[k], "hud2" + k, HUD_PAGE2_COLS);
     });
-    // Title Insurance Premiums/Endorsements seed chips -- HUD lumps everything into Section 1100
-    document.querySelectorAll("[data-seed-hud2section1100]").forEach(function(el){
-      el.addEventListener("click", function(){
-        seedPremiumItemInto(o.escrow.hud.page2.section1100, HUD_PAGE2_COLS, "borrowerAmount", el.getAttribute("data-seed-hud2section1100"), "Escrow / Closing");
-      });
-    });
-
     // Express HUD Page 3
     bindText("hud3-initialLoanAmount", function(v){ o.escrow.hud.page3.initialLoanAmount = v; });
     bindText("hud3-loanTerm", function(v){ o.escrow.hud.page3.loanTerm = v; });
