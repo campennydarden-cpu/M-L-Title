@@ -51,7 +51,12 @@ const { chromium } = require('playwright');
   await page.click('#btn-copy-derivation');
   await page.waitForTimeout(150);
 
-  const preview1 = await page.textContent('#dv-clause-preview');
+  // Trustee(s) show up in the Vested In / vesting-clause preview (dv-vesting-preview),
+  // which is entity-qualified-name-only (name + entityType + principals). The other preview
+  // box, dv-clause-preview, is the FULL legal derivation sentence and additionally requires
+  // Instrument Type, Grantor, Recorded Date, and Property > County -- none of which this test
+  // sets up, so it deliberately checks the vesting preview instead.
+  const preview1 = await page.textContent('#dv-vesting-preview');
   console.log('Derivation clause picks up Trustee?', preview1.includes('Trudy Trustee') && preview1.includes('Smith Family Trust'));
   console.log('Trustee roster visible on derivation card?', !!(await page.$('[data-del-dvp]')));
 
@@ -59,7 +64,7 @@ const { chromium } = require('playwright');
   await page.fill('#dvp-name', 'Co-Trustee Carl');
   await page.click('#btn-add-dvp');
   await page.waitForTimeout(150);
-  const preview2 = await page.textContent('#dv-clause-preview');
+  const preview2 = await page.textContent('#dv-vesting-preview');
   console.log('Second trustee appended?', preview2.includes('Co-Trustee Carl') && preview2.includes('Trudy Trustee'));
 
   // Security Instrument with type + trustee + related document
@@ -93,14 +98,16 @@ const { chromium } = require('playwright');
   const panelText2 = await page.textContent('#tab-panel');
   console.log('Related doc visible?', panelText2.includes('Assignment of Beneficial Interest'));
 
-  // Lien with type
+  // Lien with type -- Tax Lien has its own field set (debtor, taxingAuthority, taxType,
+  // filedDate, amount, book, page, instrumentNumber), distinct from the generic default
+  // (which has datedDate/court/caseNumber/creditor instead). Selecting the type swaps
+  // #lien-fields' contents live, so the fields filled below must match Tax Lien's actual set.
   await page.selectOption('#lien-lienType', 'Tax Lien');
-  await page.fill('#lien-datedDate', '2019-06-01');
-  await page.fill('#lien-filedDate', '2019-06-15');
-  await page.fill('#lien-court', 'Wake County');
-  await page.fill('#lien-caseNumber', '19-CV-0456');
+  await page.waitForTimeout(100);
   await page.fill('#lien-debtor', 'John Doe');
-  await page.fill('#lien-creditor', 'NC Dept of Revenue');
+  await page.fill('#lien-taxingAuthority', 'NC Dept of Revenue');
+  await page.fill('#lien-filedDate', '2019-06-15');
+  await page.fill('#lien-amount', '4500');
   await page.click('#btn-add-lien');
   await page.waitForTimeout(150);
 

@@ -61,7 +61,11 @@ function runOne(file) {
       // even when nothing went wrong -- only flag it when that line (or a per-error "PAGE
       // ERROR: <message>" line) actually carries content, not just an empty/none summary.
       const pageErrors = lines.some(l => /page error/i.test(l) && !/:\s*(\[\]|none)\s*$/i.test(l.trim()));
-      const crashed = timedOut || (code !== 0 && pass === 0 && fail === 0);
+      // A non-zero exit always means a crash, even if some assertions printed before the crash --
+      // a mid-script uncaught exception (e.g. a stale selector further down) silently truncates
+      // the rest of that file's assertions, which the old (pass===0 && fail===0) guard missed
+      // whenever earlier assertions had already logged successfully.
+      const crashed = timedOut || code !== 0;
       resolve({ file, pass, fail, fileFailures, pageErrors, crashed, timedOut, code, tail: lines.slice(-12).join('\n') });
     });
   });
