@@ -30,7 +30,7 @@ const { chromium } = require('playwright');
   const APP = require('url').pathToFileURL(require('path').join(__dirname, '..', 'genesis-app.html')).href;
 
   const goTab = (k) => page.click(`[data-tab="${k}"]`);
-  const getOrders = () => page.evaluate(() => JSON.parse(localStorage.getItem('genesis_orders_v1')));
+  const getOrders = () => page.evaluate(() => { if (window.__genesisFlushSave) window.__genesisFlushSave(); return JSON.parse(localStorage.getItem('genesis_orders_v1')); });
   const restore = async (json) => {
     await page.click('#btn-sidebar-backup');
     await page.waitForTimeout(150);
@@ -39,6 +39,20 @@ const { chromium } = require('playwright');
     await page.waitForTimeout(200);
   };
 
+  // Deterministic flush hook (test-harness only, not shipped app code): save() now debounces
+  // its localStorage write, so a read immediately after typing/clicking can otherwise race a
+  // still-pending write. Patching getItem to flush first (via the app's exposed
+  // window.__genesisFlushSave) makes every existing localStorage.getItem(...) read in this suite
+  // deterministic without having to touch each read site individually. saveNow() itself already
+  // no-ops this flush when there's nothing pending and a load error is unresolved, so this is safe
+  // even for the corrupted-load-must-not-be-overwritten checks in smoke_test_backup_restore.js.
+  await page.addInitScript(() => {
+    var origGetItem = Storage.prototype.getItem;
+    Storage.prototype.getItem = function(key){
+      if (key === 'genesis_orders_v1' && window.__genesisFlushSave) window.__genesisFlushSave();
+      return origGetItem.call(this, key);
+    };
+  });
   await page.goto(APP);
   await page.evaluate(() => { localStorage.clear(); localStorage.setItem('genesis_demo_seeded_v1', '1'); window.__xssFired = false; });
   await page.reload();

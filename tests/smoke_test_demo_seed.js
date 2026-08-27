@@ -18,8 +18,39 @@ const { chromium } = require('playwright');
   function log(question, val) { console.log(question, val); }
 
   // ---------- Test A: a truly first-ever load seeds exactly one demo order ----------
+  // Deterministic flush hook (test-harness only, not shipped app code): save() now debounces
+  // its localStorage write, so a read immediately after typing/clicking can otherwise race a
+  // still-pending write. Patching getItem to flush first (via the app's exposed
+  // window.__genesisFlushSave) makes every existing localStorage.getItem(...) read in this suite
+  // deterministic without having to touch each read site individually. saveNow() itself already
+  // no-ops this flush when there's nothing pending and a load error is unresolved, so this is safe
+  // even for the corrupted-load-must-not-be-overwritten checks in smoke_test_backup_restore.js.
+  await page.addInitScript(() => {
+    var origGetItem = Storage.prototype.getItem;
+    Storage.prototype.getItem = function(key){
+      if (key === 'genesis_orders_v1' && window.__genesisFlushSave) window.__genesisFlushSave();
+      return origGetItem.call(this, key);
+    };
+  });
+  // Deterministic storage-freeze helper (test-harness only): this suite reaches around the app's
+  // in-memory state.orders to directly clear/overwrite genesis_orders_v1 and then reload()s to
+  // observe how load() reacts to that on-disk state. But save()'s new beforeunload flush is
+  // registered on THIS (about to be replaced) page and still holds whatever state.orders was
+  // before our direct edit -- reload() fires beforeunload before navigating, so that stale flush
+  // would otherwise land AFTER our edit and silently resurrect/overwrite it. Freezing further
+  // writes to the key right after our own edit closes that window; the fresh page loaded by
+  // reload() gets an unblocked Storage.prototype again.
+  await page.addInitScript(() => {
+    window.__genesisFreezeStorage = function(){
+      var origSetItem = Storage.prototype.setItem;
+      Storage.prototype.setItem = function(key, val){
+        if (key === 'genesis_orders_v1') return;
+        return origSetItem.call(this, key, val);
+      };
+    };
+  });
   await page.goto(APP);
-  await page.evaluate(() => localStorage.clear());
+  await page.evaluate(() => { localStorage.clear(); window.__genesisFreezeStorage(); });
   await page.reload();
   await page.waitForTimeout(250);
 
@@ -40,6 +71,7 @@ const { chromium } = require('playwright');
   await page.evaluate((k) => {
     var orders = JSON.parse(localStorage.getItem(k) || '[]');
     localStorage.setItem(k, JSON.stringify(orders.filter(o => o.fileNo !== 'GEN-DEMO-1001')));
+    window.__genesisFreezeStorage();
   }, STORAGE_KEY);
   await page.reload();
   await page.waitForTimeout(200);
@@ -54,6 +86,7 @@ const { chromium } = require('playwright');
   await page.evaluate((k) => {
     localStorage.clear();
     localStorage.setItem(k, JSON.stringify([{ id: 'pre-existing-1', fileNo: 'GEN-1001', propertyAddress: 'Real User Order, Not A Demo' }]));
+    window.__genesisFreezeStorage();
   }, STORAGE_KEY);
   await page.reload();
   await page.waitForTimeout(200);

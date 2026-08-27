@@ -1488,7 +1488,30 @@
     seedDemoOrderIfFirstEverLoad();
     save();
   }
-  function save(){
+  // save() used to synchronously JSON.stringify the ENTIRE state.orders array and write it to
+  // localStorage on every call -- and bindText calls save() on every keystroke via the "input"
+  // listener. Cost scales with total stored data (now made worse by Firm Analytics encouraging
+  // more files to stay loaded rather than archived), so a burst of typing was re-serializing the
+  // whole book of business once per character. save() now only *schedules* a debounced write;
+  // saveNow() does the actual synchronous write immediately and is what save() eventually calls.
+  // The exported name/behavior contract (banner, saveError, try/catch) lives entirely in saveNow()
+  // so both the debounced and immediate paths share exactly one implementation.
+  var SAVE_DEBOUNCE_MS = 400;
+  var pendingSaveTimer = null;
+  function saveNow(){
+    var hadPendingEdit = !!pendingSaveTimer;
+    if(pendingSaveTimer){ clearTimeout(pendingSaveTimer); pendingSaveTimer = null; }
+    // load()'s error path deliberately leaves the original (corrupted-looking) localStorage value
+    // untouched, with state.orders reset to the [] FALLBACK, so the raw text can still be recovered
+    // by hand -- see the "Do NOT fall through to save()" comment there. saveNow() now has callers
+    // (tab close/hide, opening the backup modal, estimateStorageBytes) that fire opportunistically
+    // rather than because of a real edit; without this guard any of them would silently finish what
+    // load() specifically avoided by overwriting the recoverable data with "[]" the moment the user
+    // so much as closes the tab or opens Back Up Data to go read it. A genuine edit still always
+    // writes (hadPendingEdit is true whenever save() actually scheduled this call), exactly
+    // preserving save()'s original behavior -- only the *opportunistic, nothing-was-edited* flushes
+    // are skipped while a load error is unresolved.
+    if(!hadPendingEdit && state.loadError) return;
     try{
       var json = JSON.stringify(state.orders);
       localStorage.setItem(STORAGE_KEY, json);
@@ -1503,10 +1526,40 @@
       setSaveBanner("error", "Your last change was NOT saved (" + state.saveError.message + "). Back up your data immediately using the button below, then free up browser storage before making further changes.");
     }
   }
+  function save(){
+    if(pendingSaveTimer) clearTimeout(pendingSaveTimer);
+    pendingSaveTimer = setTimeout(function(){
+      pendingSaveTimer = null;
+      saveNow();
+    }, SAVE_DEBOUNCE_MS);
+  }
 
+  // Always reflects the CURRENT in-memory state.orders, not what's actually landed in localStorage
+  // yet -- callers that need the on-disk figure (the backup modal's size readout, the >4.5MB banner
+  // inside saveNow) get it for free since saveNow flushes before either reads it.
   function estimateStorageBytes(){
+    saveNow();
     try{ return JSON.stringify(state.orders).length; }catch(e){ return 0; }
   }
+
+  // Flush points: anywhere a stale (not-yet-written) debounced save would mean real data loss or a
+  // wrong read. A closing tab/reload fires beforeunload; a backgrounded/switched-away tab (mobile
+  // Safari suspending, OS killing a background tab) fires visibilitychange to "hidden" first and
+  // is the more reliable of the two on mobile -- keep both.
+  window.addEventListener("beforeunload", saveNow);
+  document.addEventListener("visibilitychange", function(){
+    if(document.visibilityState === "hidden") saveNow();
+  });
+  // Deterministic flush hook for the Playwright smoke suite: many tests type into a field then
+  // immediately read localStorage back, which the debounce above would otherwise make racy.
+  // Not used by any in-app code path -- app code always goes through save()/saveNow() directly.
+  // Gated on genesisLoaded so a test's getItem-triggered flush can never fire *during* load()'s own
+  // first read of localStorage (below) -- that read is the one load() deliberately protects (see
+  // its "Do NOT fall through to save()" comment); flushing there would serialize the still-blank,
+  // not-yet-populated state.orders over whatever (possibly corrupted, possibly precious) raw value
+  // load() is in the middle of trying to read. The hook is a no-op until load() has returned.
+  var genesisLoaded = false;
+  window.__genesisFlushSave = function(){ if(genesisLoaded) saveNow(); };
 
   function setSaveBanner(type, message){
     var el = document.getElementById("save-status-banner");
@@ -1551,6 +1604,9 @@
   }
 
   function openBackupModal(){
+    // Backup is the safety-net path -- flush any pending debounced write first so the exported
+    // JSON and the "KB of browser storage" readout both reflect the true, currently-saved state.
+    saveNow();
     closeBackupModal();
     var overlay = document.createElement("div");
     overlay.className = "backup-overlay";
@@ -1638,7 +1694,11 @@
         normalizeOrder(incoming);
         if(idx >= 0){ state.orders[idx] = incoming; updated++; } else { state.orders.push(incoming); added++; }
       });
-      save();
+      // Restoring from pasted backup JSON is the explicit recovery action for a failed load -- it
+      // just replaced state.orders with real data, so the "don't clobber the corrupted original"
+      // guard in saveNow() no longer applies and must not swallow this write.
+      state.loadError = null;
+      saveNow(); // restore is itself a backup-path write -- flush immediately, don't debounce it
       statusEl.style.color = "var(--teal-deep)";
       statusEl.textContent = "Restored: " + added + " added, " + updated + " updated.";
       closeBackupModal();
@@ -4130,18 +4190,179 @@
   // that CDF-relative N gets translated into a safe position within the shared HUD section1100
   // array without reordering rows other CDF sections already placed there.
   function cdSectionItemCount(o, cdSection){ return (o.escrow.cdf.page2[cdSection] || []).length; }
+  // The only HUD Page 2 sections Assign-to-CD/HUD ever writes into (the distinct values of
+  // CD_TO_HUD_SECTION). Kept derived rather than hand-listed so adding a CD->HUD mapping above
+  // automatically widens every link-aware scan below.
+  var CD_HUD_TARGET_SECTIONS = Object.keys(CD_TO_HUD_SECTION).map(function(k){ return CD_TO_HUD_SECTION[k]; })
+    .filter(function(v, i, arr){ return arr.indexOf(v) === i; });
+  // sourceTypes that reach CDF/HUD Page 2 through assignItemToCdHud(). Used to scope the paired-row
+  // cleanup in wireLineItemTable's delete handler so it can never touch the *other* source-tagged
+  // rows in this app (e.g. "payoff" rows on CDF Page 3 / HUD Page 1, which have their own upsert
+  // mechanism and are not part of this pairing).
+  var CD_HUD_ASSIGN_SOURCE_TYPES = ["tpremium", "tpmisc", "endorsement", "escrowcharge", "recdoc", "transfertax", "stamptax"];
+  // Single scan that finds BOTH halves of an assignment. isAssignedToCdHud() used to look only at
+  // the CDF sections, which is what made the orphan bug possible: deleting the CDF line cleared the
+  // "already assigned" flag while the paired HUD line survived, so re-assigning double-booked the
+  // charge in HUD 1100. Everything that asks "is this fee assigned?" now goes through here.
+  function cdHudRowsFor(o, sourceType, sourceId){
+    var res = { cdfRows: [], hudRows: [], cdSection: null, hudSection: null };
+    if(!o || !sourceType || !sourceId) return res;
+    CDF_PAGE2_SECTIONS.forEach(function(k){
+      (o.escrow.cdf.page2[k] || []).forEach(function(it){
+        if(it.sourceType === sourceType && it.sourceId === sourceId){ res.cdfRows.push(it); res.cdSection = k; }
+      });
+    });
+    CD_HUD_TARGET_SECTIONS.forEach(function(k){
+      ((o.escrow.hud.page2 || {})[k] || []).forEach(function(it){
+        if(it.sourceType === sourceType && it.sourceId === sourceId){ res.hudRows.push(it); res.hudSection = k; }
+      });
+    });
+    return res;
+  }
   function isAssignedToCdHud(o, sourceType, sourceId){
     if(!sourceType) return false;
-    return CDF_PAGE2_SECTIONS.some(function(k){
-      return (o.escrow.cdf.page2[k] || []).some(function(it){ return it.sourceType === sourceType && it.sourceId === sourceId; });
-    });
+    var rows = cdHudRowsFor(o, sourceType, sourceId);
+    return rows.cdfRows.length > 0 || rows.hudRows.length > 0;
   }
   function assignedCdSectionOf(o, sourceType, sourceId){
-    var found = null;
-    CDF_PAGE2_SECTIONS.forEach(function(k){
-      if((o.escrow.cdf.page2[k]||[]).some(function(it){ return it.sourceType === sourceType && it.sourceId === sourceId; })) found = k;
-    });
-    return found;
+    return cdHudRowsFor(o, sourceType, sourceId).cdSection;
+  }
+  // Which column on a generated row actually holds the copied money. assignItemToCdHud() stamps
+  // sourceAmountKey at assign time; "" means "deliberately no column" (a third-party Payor has no
+  // HUD column to land in -- see resolveCdHudPayorCols), and undefined means a row written before
+  // this stamp existed, where the only evidence left is which column is non-blank.
+  function cdHudRowAmountKey(row, cols){
+    if(!row) return null;
+    if(row.sourceAmountKey !== undefined) return row.sourceAmountKey || null;
+    var col = cols.filter(function(c){ return row[c.key] !== "" && row[c.key] != null; })[0];
+    return col ? col.key : null;
+  }
+  function cdHudAmtNum(v){ var n = parseFloat(v); return isNaN(n) ? null : n; }
+  // fmtMoney() returns "" for a blank/unparseable amount, which reads as a missing word mid-sentence
+  // in the out-of-sync message -- name the blank explicitly instead.
+  function cdHudAmtLabel(v){ return fmtMoney(v) || "(blank)"; }
+  // Blank and 0.00 are different answers here (a waived fee is not an unfilled fee), so two values
+  // only agree if they are both blank or both parse to the same number (to the cent).
+  function cdHudAmtAgrees(a, b){
+    var x = cdHudAmtNum(a), y = cdHudAmtNum(b);
+    if(x === null && y === null) return true;
+    if(x === null || y === null) return false;
+    return Math.abs(x - y) < 0.005;
+  }
+  // Reads the live amount off the source screen's own record, so the status helper can compare it
+  // against what was copied without every cdAssignBlock() call site having to pass it in. Title
+  // premiums resolve off the order (the three tpremium sourceIds live on two different objects);
+  // everything else reads its own row, which is the `item` cdAssignBlock was already handed.
+  function cdHudSourceAmount(o, sourceType, sourceId, item){
+    if(sourceType === "tpremium"){
+      if(sourceId === "owner") return o.titlePremiums.ownerPolicy.premium;
+      if(sourceId === "loan") return o.titlePremiums.loanPolicy.premium;
+      if(sourceId === "simultaneous") return o.titlePremiums.loanPolicy.simultaneousIssueFee;
+      return null;
+    }
+    if(!item) return null; // caller didn't hand us the source record -- source side is unknown, not zero
+    if(sourceType === "recdoc") return computeRecordingDocAmount(item);
+    if(sourceType === "transfertax" || sourceType === "stamptax") return computeRecordingTaxAmount(item);
+    if(sourceType === "endorsement") return item.fee;
+    return item.amount; // tpmisc, escrowcharge
+  }
+  /* Reports the real state of a CD/HUD assignment instead of assuming one exists forever.
+     assignItemToCdHud() COPIES an amount into two independently-editable rows -- it does not link
+     them -- so after the fact there are three copies of the same dollar figure (source fee, CDF row,
+     HUD row) that can each drift. Statuses:
+       "none"    -- nothing assigned.
+       "partial" -- rows on one side but not the other (the orphan bug), or duplicate rows on a side.
+       "stale"   -- all three rows exist but their live amounts no longer agree with each other.
+       "linked"  -- source, CDF and HUD all currently say the same thing.
+     Deliberate call: staleness is judged on the LIVE amounts agreeing with each other, not purely on
+     the assignedAt/sourceAmount snapshot. Editing all three to the same new figure by hand is a
+     correct file, and nagging about it would train staff to ignore the indicator. The snapshot is
+     still stamped and surfaced ("assigned as $X") so staff can see what was originally copied, and
+     it is what a "Re-sync" rewrites. A third-party Payor's HUD row intentionally has no amount
+     column at all, so its (always-blank) HUD amount is excluded from the comparison. */
+  function cdHudLinkStatus(o, sourceType, sourceId, item){
+    var res = { assigned: false, status: "none", cdSection: null, hudSection: null, cdfRows: [], hudRows: [],
+                sourceAmount: null, sourceKnown: false, snapshotAmount: null, assignedAt: "",
+                cdfAmount: null, hudAmount: null, hudTracksAmount: false, detail: "" };
+    if(!sourceType || !sourceId) return res;
+    var rows = cdHudRowsFor(o, sourceType, sourceId);
+    res.cdfRows = rows.cdfRows; res.hudRows = rows.hudRows;
+    res.cdSection = rows.cdSection; res.hudSection = rows.hudSection;
+    if(!rows.cdfRows.length && !rows.hudRows.length) return res;
+    res.assigned = true;
+    var srcAmt = cdHudSourceAmount(o, sourceType, sourceId, item);
+    res.sourceKnown = srcAmt !== null && srcAmt !== undefined;
+    res.sourceAmount = res.sourceKnown ? srcAmt : null;
+    var cdfCols = cdfIsRefi(o) ? CDF_PAGE2_COLS_REFI : CDF_PAGE2_COLS_PURCHASE;
+    var cdfRow = rows.cdfRows[0], hudRow = rows.hudRows[0];
+    if(cdfRow){
+      var cdfKey = cdHudRowAmountKey(cdfRow, cdfCols);
+      res.cdfAmount = cdfKey ? cdfRow[cdfKey] : null;
+      if(cdfRow.sourceAmount !== undefined) res.snapshotAmount = cdfRow.sourceAmount;
+      if(cdfRow.assignedAt) res.assignedAt = cdfRow.assignedAt;
+    }
+    if(hudRow){
+      var hudKey = cdHudRowAmountKey(hudRow, HUD_PAGE2_COLS);
+      res.hudTracksAmount = !!hudKey;
+      res.hudAmount = hudKey ? hudRow[hudKey] : null;
+      if(res.snapshotAmount === null && hudRow.sourceAmount !== undefined) res.snapshotAmount = hudRow.sourceAmount;
+      if(!res.assignedAt && hudRow.assignedAt) res.assignedAt = hudRow.assignedAt;
+    }
+    if(rows.cdfRows.length > 1 || rows.hudRows.length > 1){
+      res.status = "partial";
+      res.detail = "Duplicate assigned lines exist (" + rows.cdfRows.length + " on the CD, " + rows.hudRows.length + " on the HUD).";
+      return res;
+    }
+    if(!rows.cdfRows.length || !rows.hudRows.length){
+      res.status = "partial";
+      res.detail = rows.cdfRows.length ? "The paired HUD line is missing." : "The paired CD line is missing.";
+      return res;
+    }
+    var vals = [];
+    if(res.sourceKnown) vals.push(res.sourceAmount);
+    vals.push(res.cdfAmount);
+    if(res.hudTracksAmount) vals.push(res.hudAmount);
+    var allAgree = vals.every(function(v){ return cdHudAmtAgrees(v, vals[0]); });
+    res.status = allAgree ? "linked" : "stale";
+    return res;
+  }
+  // Pushes the live source amount back into both generated rows and re-stamps the snapshot. Writes
+  // into whichever column each row's money already lives in (sourceAmountKey), so a row a closer
+  // deliberately moved to another Payor column keeps that routing -- re-sync corrects the FIGURE,
+  // not the routing. Rows are left fully editable afterwards, by design.
+  function resyncCdHudRows(o, sourceType, sourceId, amount, sectionLabel){
+    var rows = cdHudRowsFor(o, sourceType, sourceId);
+    if(!rows.cdfRows.length && !rows.hudRows.length) return false;
+    var cdfCols = cdfIsRefi(o) ? CDF_PAGE2_COLS_REFI : CDF_PAGE2_COLS_PURCHASE;
+    var stamp = new Date().toISOString();
+    function push(row, cols){
+      var key = cdHudRowAmountKey(row, cols);
+      if(key) row[key] = amount;
+      row.sourceAmount = amount;
+      row.assignedAt = stamp;
+      if(row.sourceAmountKey === undefined) row.sourceAmountKey = key || "";
+    }
+    rows.cdfRows.forEach(function(r){ push(r, cdfCols); });
+    rows.hudRows.forEach(function(r){ push(r, HUD_PAGE2_COLS); });
+    logHistoryEvent(o, sectionLabel || "Escrow / Closing", "edited", "Re-synced assigned CD/HUD line to " + fmtMoney(amount));
+    return true;
+  }
+  // Deleting one half of an assignment used to leave the other half behind (wireLineItemTable's
+  // delete handler splices only its own array), which both double-booked the charge on re-assign and
+  // left a line no screen could explain. Removing a source-linked row now removes its paired row too.
+  function removeCdHudPairedRows(o, sourceType, sourceId){
+    if(!o || !sourceType || !sourceId) return 0;
+    if(CD_HUD_ASSIGN_SOURCE_TYPES.indexOf(sourceType) === -1) return 0;
+    var removed = 0;
+    function scrub(arr){
+      if(!arr) return;
+      for(var i = arr.length - 1; i >= 0; i--){
+        if(arr[i].sourceType === sourceType && arr[i].sourceId === sourceId){ arr.splice(i, 1); removed++; }
+      }
+    }
+    CDF_PAGE2_SECTIONS.forEach(function(k){ scrub(o.escrow.cdf.page2[k]); });
+    CD_HUD_TARGET_SECTIONS.forEach(function(k){ scrub((o.escrow.hud.page2 || {})[k]); });
+    return removed;
   }
   // Maps a candidate's chosen Payor to the CDF/HUD column pair the amount should actually land
   // in, instead of always defaulting to Borrower At Closing / Borrower regardless of who's paying.
@@ -4181,8 +4402,16 @@
     var cdfTarget = o.escrow.cdf.page2[cdSection];
     var hudTarget = o.escrow.hud.page2[CD_TO_HUD_SECTION[cdSection]];
     var payorCols = resolveCdHudPayorCols(o, cand, cdfCols);
+    // sourceAmount / assignedAt / sourceAmountKey are the snapshot of what was actually copied here.
+    // The generated rows stay independently editable (staff must be able to correct a CD/HUD line
+    // in place), so the snapshot is the only record of what the three copies of this figure agreed
+    // on at assign time -- cdHudLinkStatus() reads it to tell the truth about drift afterwards, and
+    // resyncCdHudRows() rewrites it. amountKey is null for a third-party Payor (HUD has no column
+    // for money neither party pays); "" records that as deliberate rather than as a lost value.
+    var assignedAt = new Date().toISOString();
     function buildItem(cols, amountKey){
-      var it = { id: uid(), description: cand.label, sourceType: cand.sourceType, sourceId: cand.sourceId };
+      var it = { id: uid(), description: cand.label, sourceType: cand.sourceType, sourceId: cand.sourceId,
+                 sourceAmount: cand.amount, sourceAmountKey: amountKey || "", assignedAt: assignedAt };
       cols.forEach(function(c){ it[c.key] = (c.key === amountKey) ? cand.amount : ""; });
       return it;
     }
@@ -4262,10 +4491,42 @@
   // and skip the dropdown.
   function cdAssignBlock(o, idPrefix, item, sourceType, sourceId, sectionChoices){
     if(!sourceId) return "";
-    if(isAssignedToCdHud(o, sourceType, sourceId)){
-      var foundSection = assignedCdSectionOf(o, sourceType, sourceId);
-      var colLabel = assignedCdColumnLabel(o, sourceType, sourceId, foundSection);
-      return '<p class="field-hint" style="margin-top:8px;color:var(--green)">&#10003; Assigned to CD Section ' + esc((foundSection||"").replace("section","")) + (colLabel ? ' (' + esc(colLabel) + ')' : '') + ' / HUD ' + esc((CD_TO_HUD_SECTION[foundSection]||"").replace("section","")) + '. Delete that line on the CD/HUD screen to reassign.</p>';
+    var link = cdHudLinkStatus(o, sourceType, sourceId, item);
+    if(link.assigned){
+      var foundSection = link.cdSection;
+      var colLabel = foundSection ? assignedCdColumnLabel(o, sourceType, sourceId, foundSection) : "";
+      var whereHtml = foundSection ?
+        ('CD Section ' + esc(foundSection.replace("section","")) + (colLabel ? ' (' + esc(colLabel) + ')' : '') +
+          (link.hudSection ? ' / HUD ' + esc(link.hudSection.replace("section","")) : '')) :
+        ('HUD ' + esc((link.hudSection || "").replace("section","")));
+      if(link.status === "linked"){
+        return '<p class="field-hint" style="margin-top:8px;color:var(--green)">&#10003; Assigned to ' + whereHtml +
+          ' &mdash; in sync at ' + esc(cdHudAmtLabel(link.cdfAmount)) + '. Delete that line on the CD/HUD screen to reassign.</p>';
+      }
+      // Out of sync. Never assert a link that stopped being true: name the figures that disagree and
+      // offer the one-click correction. The CD/HUD rows stay editable either way -- Re-sync is an
+      // option, not a lock.
+      var stale = link.status === "stale";
+      var tone = stale ? "amber" : "red";
+      var parts = [];
+      if(link.sourceKnown) parts.push('this fee ' + cdHudAmtLabel(link.sourceAmount));
+      if(link.cdfRows.length) parts.push('CD line ' + cdHudAmtLabel(link.cdfAmount));
+      if(link.hudRows.length && link.hudTracksAmount) parts.push('HUD line ' + cdHudAmtLabel(link.hudAmount));
+      var snapHtml = (link.snapshotAmount !== null && link.snapshotAmount !== undefined) ?
+        ' Assigned as ' + esc(cdHudAmtLabel(link.snapshotAmount)) + (link.assignedAt ? ' on ' + esc(fmtDate(link.assignedAt.slice(0,10))) : '') + '.' : '';
+      // Re-sync only makes sense when all three copies exist and we can read the live source figure.
+      // A partially-orphaned pair needs the leftover line deleted on the CD/HUD screen instead --
+      // which now clears both halves, so re-assigning afterwards can't double-book.
+      var canResync = stale && link.sourceKnown;
+      return '<div class="cd-assign-row" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;padding:8px 10px;border-radius:6px;background:var(--' + tone + '-bg);border:1px solid var(--' + tone + ')">' +
+        '<span class="field-hint" style="margin:0;color:var(--' + tone + ')"><strong>' +
+          (stale ? '&#9888; Out of sync with CD/HUD line' : '&#9888; CD/HUD assignment is incomplete') + '</strong> &mdash; ' +
+          (stale ? esc(parts.join(' vs. ')) + '.' : esc(link.detail) + ' Delete the remaining line on the CD/HUD screen to reassign.') +
+          ' Assigned to ' + whereHtml + '.' + snapHtml +
+        '</span>' +
+        (canResync ?
+          '<button class="btn btn-secondary" data-cd-resync="' + idPrefix + '" style="font-size:11px;padding:6px 10px">Re-sync to ' + esc(cdHudAmtLabel(link.sourceAmount)) + '</button>' : '') +
+      '</div>';
     }
     var cdSection = item.cdSection && sectionChoices.indexOf(item.cdSection) !== -1 ? item.cdSection : sectionChoices[0];
     var sectionHtml = sectionChoices.length > 1 ?
@@ -4291,6 +4552,15 @@
       var cdSection = secEl ? secEl.value :
         (item.cdSection && sectionChoices && sectionChoices.indexOf(item.cdSection) !== -1 ? item.cdSection : (sectionChoices && sectionChoices[0]));
       assignItemToCdHud(o, candFn(), cdSection, posVal, sectionLabel);
+    });
+    // Re-sync: push the fee's CURRENT amount back into both generated rows. candFn() is the same
+    // source-of-truth the Assign button uses, so this can never disagree with what a fresh assign
+    // would have written.
+    var resyncBtn = document.querySelector('[data-cd-resync="' + idPrefix + '"]');
+    if(resyncBtn) resyncBtn.addEventListener("click", function(){
+      var cand = candFn();
+      if(!resyncCdHudRows(o, cand.sourceType, cand.sourceId, cand.amount, sectionLabel)) return;
+      save(); renderTabPanel();
     });
   }
   function titlePremiumOnlyTotal(o){
@@ -6496,7 +6766,18 @@
       el.addEventListener("click", function(){
         var val = el.getAttribute("data-li-del");
         var id = val.slice(prefix.length + 1);
-        for(var i=0;i<items.length;i++){ if(items[i].id === id){ items.splice(i,1); break; } }
+        var removed = null;
+        for(var i=0;i<items.length;i++){ if(items[i].id === id){ removed = items.splice(i,1)[0]; break; } }
+        // A row that came from Assign to CD/HUD has a twin in the other document (see
+        // assignItemToCdHud). This handler only ever splices its own array, so deleting the CDF half
+        // used to leave the HUD half behind as an orphan -- and because the "already assigned" check
+        // only looked at the CDF sections, the fee then looked free to re-assign and got double-booked
+        // in HUD 1100. Take the pair down together so the file can never hold half an assignment.
+        if(removed && removed.sourceType && removed.sourceId){
+          var ord = currentOrder();
+          var alsoRemoved = removeCdHudPairedRows(ord, removed.sourceType, removed.sourceId);
+          if(alsoRemoved) logHistoryEvent(ord, "Escrow / Closing", "deleted", "Paired CD/HUD line removed with " + (removed.description || "assigned line"));
+        }
         save(); renderTabPanel();
       });
     });
@@ -9429,6 +9710,7 @@
   }
 
   load();
+  genesisLoaded = true;
   render();
 })();
 </script>

@@ -7,6 +7,38 @@ const { chromium } = require('playwright');
   page.on('pageerror', err => errors.push(err.message));
   const APP = require('url').pathToFileURL(require('path').join(__dirname, '..', 'genesis-app.html')).href;
 
+  // Deterministic flush hook (test-harness only, not shipped app code): save() now debounces
+  // its localStorage write, so a read immediately after typing/clicking can otherwise race a
+  // still-pending write. Patching getItem to flush first (via the app's exposed
+  // window.__genesisFlushSave) makes every existing localStorage.getItem(...) read in this suite
+  // deterministic without having to touch each read site individually. saveNow() itself already
+  // no-ops this flush when there's nothing pending and a load error is unresolved, so this is safe
+  // even for the corrupted-load-must-not-be-overwritten checks in smoke_test_backup_restore.js.
+  await page.addInitScript(() => {
+    var origGetItem = Storage.prototype.getItem;
+    Storage.prototype.getItem = function(key){
+      if (key === 'genesis_orders_v1' && window.__genesisFlushSave) window.__genesisFlushSave();
+      return origGetItem.call(this, key);
+    };
+  });
+  // Deterministic legacy-migration injection helper (test-harness only): this suite writes a
+  // legacy-shaped order straight into localStorage, bypassing the running app's in-memory
+  // state.orders entirely, then reload()s to exercise normalizeOrder(). But save()'s new
+  // beforeunload flush is registered on THIS (about to be replaced) page and still holds the
+  // pre-injection state.orders -- reload() fires beforeunload before navigating, so that stale
+  // flush would otherwise land AFTER our raw write and silently clobber the legacy JSON we're
+  // deliberately injecting. Blocking further writes to the key right after our own write closes
+  // that window; the fresh page loaded by reload() gets an unblocked Storage.prototype again.
+  await page.addInitScript(() => {
+    window.__genesisWriteOrdersRaw = function(orders){
+      localStorage.setItem('genesis_orders_v1', JSON.stringify(orders));
+      var origSetItem = Storage.prototype.setItem;
+      Storage.prototype.setItem = function(key, val){
+        if (key === 'genesis_orders_v1') return;
+        return origSetItem.call(this, key, val);
+      };
+    };
+  });
   await page.goto(APP);
   await page.evaluate(() => {
     var old = [{
@@ -23,7 +55,7 @@ const { chromium } = require('playwright');
         commencements: [{ id: 'c1', datedDate: '2018-01-01', recordedDate: '2018-01-05', owner: 'John Doe', contractor: 'Old Builders', book: '', page: '', instrumentNumber: '' }]
       }
     }];
-    localStorage.setItem('genesis_orders_v1', JSON.stringify(old));
+    window.__genesisWriteOrdersRaw(old);
   });
   await page.reload();
   await page.waitForTimeout(300);

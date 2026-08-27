@@ -14,11 +14,34 @@ const { chromium } = require('playwright');
   const APP = require('url').pathToFileURL(require('path').join(__dirname, '..', 'genesis-app.html')).href;
 
   const goTab = (k) => page.click(`[data-tab="${k}"]`);
-  const getOrder = () => page.evaluate(() => JSON.parse(localStorage.getItem('genesis_orders_v1'))[0]);
+  const getOrder = () => page.evaluate(() => { if (window.__genesisFlushSave) window.__genesisFlushSave(); return JSON.parse(localStorage.getItem('genesis_orders_v1'))[0]; });
 
+  // Deterministic flush hook (test-harness only, not shipped app code): save() now debounces
+  // its localStorage write, so a read immediately after typing/clicking can otherwise race a
+  // still-pending write. Patching getItem to flush first (via the app's exposed
+  // window.__genesisFlushSave) makes every existing localStorage.getItem(...) read in this suite
+  // deterministic without having to touch each read site individually. saveNow() itself already
+  // no-ops this flush when there's nothing pending and a load error is unresolved, so this is safe
+  // even for the corrupted-load-must-not-be-overwritten checks in smoke_test_backup_restore.js.
+  // Pre-seed the "demo already seeded" flag via addInitScript (runs before genesis-app's own
+  // script, on every navigation of this page) instead of the old clear()-then-reload() dance.
+  // save()'s new beforeunload/visibilitychange flush hooks mean that dance is no longer reliable:
+  // this is the FIRST-ever load for a fresh browser context (browser.newPage() creates an isolated
+  // context each time), so with no flag yet present, load() auto-seeds a demo order and schedules
+  // a debounced save; localStorage.clear() then wipes the flag from disk but NOT the demo order
+  // still sitting in state.orders, and the very next reload's beforeunload flush faithfully (if
+  // unhelpfully, here) writes that in-memory demo order straight back -- leaving a stray
+  // "GEN-DEMO-1001" order alongside whatever this test creates instead of a clean slate. Setting
+  // the flag before the app ever boots avoids the demo seed entirely, so there's nothing to race.
+  await page.addInitScript(() => { localStorage.setItem('genesis_demo_seeded_v1', '1'); });
+  await page.addInitScript(() => {
+    var origGetItem = Storage.prototype.getItem;
+    Storage.prototype.getItem = function(key){
+      if (key === 'genesis_orders_v1' && window.__genesisFlushSave) window.__genesisFlushSave();
+      return origGetItem.call(this, key);
+    };
+  });
   await page.goto(APP);
-  await page.evaluate(() => { localStorage.clear(); localStorage.setItem('genesis_demo_seeded_v1', '1'); });
-  await page.reload();
   await page.waitForTimeout(200);
 
   await page.click('#btn-new-order');
