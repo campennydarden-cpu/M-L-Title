@@ -5,6 +5,7 @@
 
 # Vault notes live in Obsidian - not tracked here to avoid stale duplicates
 *.md
+!README.md
 !tests/legacy/README.md
 !tests/README.md
 bookmarks.json
