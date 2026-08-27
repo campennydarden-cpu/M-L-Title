@@ -1993,6 +1993,56 @@
       { id: uid(), description: "Schedule Closing Appointment", milestone: "Closing", dueDate: o.settlementDate, status: "In Progress", completedDate: "" }
     ];
 
+    o.titlePremiums.state = "NC";
+    o.titlePremiums.underwriterName = "First American Title Insurance Company";
+    o.titlePremiums.rateScenario = "Simultaneous Issue - Std Owner's (Higher)/Std Loan Policy";
+    o.titlePremiums.rateManualReference = "NC Title Insurance Rates, eff. 02-01-2026";
+    o.titlePremiums.agentPercent = "70"; o.titlePremiums.underwriterPercent = "30";
+    o.titlePremiums.ownerPolicy = { rateBasis: "Regular Rate", premium: "1451.00", billCode: "TP-OWN", notes: "",
+      payorContactId: sellerId, payorOther: "", payor: "", payeeContactId: saId, payeeOther: "", payee: "" };
+    o.titlePremiums.loanPolicy = { rateBasis: "Simultaneous Issue", premium: "150.00", simultaneousIssueFee: "50.00", billCode: "TP-LOAN", notes: "",
+      cdSection: "sectionC", simultaneousIssue: { cdSection: "sectionC" },
+      payorContactId: buyer1Id, payorOther: "", payor: "", payeeContactId: saId, payeeOther: "", payee: "" };
+    o.titlePremiums.miscFees = [
+      { id: uid(), description: "Title Commitment Fee", amount: "150.00", billCode: "TP-COMM", notes: "",
+        payorContactId: buyer1Id, payorOther: "", payor: "", payeeContactId: saId, payeeOther: "", payee: "", cdSection: "sectionC" },
+      { id: uid(), description: "Closing Protection Letter (CPL) Fee", amount: "25.00", billCode: "TP-CPL", notes: "",
+        payorContactId: buyer1Id, payorOther: "", payor: "", payeeContactId: saId, payeeOther: "", payee: "", cdSection: "sectionC" }
+    ];
+
+    o.endorsements = [
+      { id: uid(), description: "ALTA 8.1-06 Environmental Protection Lien", appliesTo: "Loan", fee: "25.00", billCode: "END-8.1", notes: "",
+        sourceType: null, sourceId: null, cdSection: "sectionC", underwriterSplitPercent: "",
+        payorContactId: buyer1Id, payorOther: "", payor: "", payeeContactId: saId, payeeOther: "", payee: "" },
+      { id: uid(), description: "ALTA 9-06 Restrictions, Encroachments, Minerals", appliesTo: "Both", fee: "50.00", billCode: "END-9", notes: "",
+        sourceType: null, sourceId: null, cdSection: "sectionC", underwriterSplitPercent: "",
+        payorContactId: buyer1Id, payorOther: "", payor: "", payeeContactId: saId, payeeOther: "", payee: "" }
+    ];
+
+    o.escrow.charges = [
+      { id: uid(), description: "Wire Fee", amount: "25.00", billCode: "MISC-WIRE",
+        payorContactId: buyer1Id, payorOther: "", payor: "", payeeContactId: saId, payeeOther: "", payee: "",
+        split: "Buyer 100%", passThrough: false, poc: false, cdSection: "sectionB" },
+      { id: uid(), description: "Courier / Delivery Fee", amount: "35.00", billCode: "MISC-COUR",
+        payorContactId: buyer1Id, payorOther: "", payor: "", payeeContactId: saId, payeeOther: "", payee: "",
+        split: "Buyer 100%", passThrough: true, poc: false, cdSection: "sectionB" }
+    ];
+
+    o.escrow.recording.documents = [
+      { id: uid(), description: "Deed", pages: "2", feePerDoc: "26.00", feePerPage: "4.00", billCode: "REC-DEED", notes: "",
+        payorContactId: buyer1Id, payorOther: "", payor: "", payeeContactId: saId, payeeOther: "", payee: "", cdSection: "sectionE" },
+      { id: uid(), description: "Deed of Trust", pages: "14", feePerDoc: "26.00", feePerPage: "4.00", billCode: "REC-DOT", notes: "",
+        payorContactId: buyer1Id, payorOther: "", payor: "", payeeContactId: saId, payeeOther: "", payee: "", cdSection: "sectionE" }
+    ];
+    o.escrow.recording.transferTaxes = [
+      { id: uid(), description: "Buncombe County Land Transfer Tax", basisAmount: "415000", rate: "0.4", rateUnit: "percent", billCode: "REC-CTT", notes: "",
+        payorContactId: sellerId, payorOther: "", payor: "", payeeContactId: saId, payeeOther: "", payee: "", cdSection: "sectionE" }
+    ];
+    o.escrow.recording.stampTaxes = [
+      { id: uid(), description: "NC Excise Tax (Revenue Stamps)", basisAmount: "415000", rate: "2", rateUnit: "perThousand", billCode: "REC-EXC", notes: "",
+        payorContactId: sellerId, payorOther: "", payor: "", payeeContactId: saId, payeeOther: "", payee: "", cdSection: "sectionE" }
+    ];
+
     logHistoryEvent(o, "Order Entry", "milestone", "File Created");
     logHistoryEvent(o, "Commitment", "milestone", "Commitment Generated");
     logHistoryEvent(o, "Commitment", "milestone", "Commitment Finalized");

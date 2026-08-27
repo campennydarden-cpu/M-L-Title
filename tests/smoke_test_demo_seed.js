@@ -63,9 +63,35 @@ const { chromium } = require('playwright');
   const demoFlagSet = await page.evaluate((k) => localStorage.getItem(k), DEMO_KEY);
   log('Demo-seeded flag was set?', demoFlagSet === '1');
 
+  // Title Insurance Premiums, Endorsements, Additional Title/Escrow Charges, and Recording all
+  // get realistic seeded data too (2026-08-27 fix) -- previously these four newer screens were
+  // left at blankOrder() defaults, so a first click-through hit empty-state cards right after the
+  // otherwise fully-populated Commitment/Doc Prep/CDF screens.
+  log('Seeded order has an Owner Policy premium?', !!(ordersAfterFirstLoad[0] && ordersAfterFirstLoad[0].titlePremiums.ownerPolicy.premium));
+  log('Seeded order has at least one misc title fee?', ordersAfterFirstLoad[0] && ordersAfterFirstLoad[0].titlePremiums.miscFees.length >= 1);
+  log('Seeded order has at least one endorsement?', ordersAfterFirstLoad[0] && ordersAfterFirstLoad[0].endorsements.length >= 1);
+  log('Seeded order has at least one additional title/escrow charge?', ordersAfterFirstLoad[0] && ordersAfterFirstLoad[0].escrow.charges.length >= 1);
+  log('Seeded order has at least one recording document?', ordersAfterFirstLoad[0] && ordersAfterFirstLoad[0].escrow.recording.documents.length >= 1);
+  log('Seeded order has at least one transfer or stamp tax?', ordersAfterFirstLoad[0] && (ordersAfterFirstLoad[0].escrow.recording.transferTaxes.length + ordersAfterFirstLoad[0].escrow.recording.stampTaxes.length) >= 1);
+
   // Sidebar should show the seeded order.
   const sidebarShowsDemo = await page.$eval('.order-list', el => el.textContent.indexOf('GEN-DEMO-1001') !== -1).catch(() => false);
   log('Sidebar shows the seeded demo file?', sidebarShowsDemo);
+
+  // UI-level check: opening the seeded demo order and clicking through each of the four newer fee
+  // screens should never show an empty-state card ("No ... added yet" / "No ... yet") -- the whole
+  // point of seeding realistic data on titlePremiums/endorsements/escrow.charges/escrow.recording.
+  await page.click('.order-item');
+  const goTab = (k) => page.click(`[data-tab="${k}"]`);
+  const noEmptyCard = async () => !(await page.$('.empty-card'));
+  await goTab('titlePremiums');
+  log('Title Insurance Premiums tab shows no empty-state card?', await noEmptyCard());
+  await goTab('endorsements');
+  log('Endorsements tab shows no empty-state card?', await noEmptyCard());
+  await goTab('escrowCharges');
+  log('Additional Title/Escrow Charges tab shows no empty-state card?', await noEmptyCard());
+  await goTab('escrowRecording');
+  log('Recording tab shows no empty-state card?', await noEmptyCard());
 
   // ---------- Test B: deleting the demo order and reloading does NOT re-seed it ----------
   await page.evaluate((k) => {
