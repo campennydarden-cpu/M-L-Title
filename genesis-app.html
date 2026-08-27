@@ -263,6 +263,7 @@
   }
   textarea{ resize: vertical; min-height: 68px; font-family: inherit; }
   input::placeholder, textarea::placeholder{ color: #A7B2BC; }
+  .bill-code-input{ text-transform: uppercase; font-family: 'IBM Plex Mono', monospace; letter-spacing: 0.02em; }
 
   .field-hint{ font-size: 11.5px; color: #8998A4; }
 
@@ -465,6 +466,10 @@
   ];
   var ENDORSEMENT_APPLIES_TO = ["Owner's", "Loan", "Both"];
   var RATE_BASIS_OPTIONS = ["Regular Rate", "Reissue Rate", "Simultaneous Issue", "Short Form / Limited Coverage", "Substitution / Refinance Rate", "Other"];
+  // Bill Code is a short, uppercase, alphanumeric-plus-hyphen code -- not a free-text field, but
+  // also not a fixed enum since there's no canonical list of the firm's real accounting codes
+  // anywhere in the app. Empty string is always valid (Bill Code is optional everywhere it appears).
+  var BILL_CODE_PATTERN = /^[A-Z0-9-]{0,12}$/;
   // The rate-scenario picker on Title Insurance Premiums -- which combination of Owner's/Loan
   // policy forms is being priced. Purely descriptive/bookkeeping (which rate-manual line the
   // staffer looked up), not a computed rate -- same "Genesis doesn't compute rates" philosophy
@@ -4629,7 +4634,7 @@
           docFact("Coverage Amount (Schedule A)", sa.ownerPolicy.coverageAmount ? fmtMoney(sa.ownerPolicy.coverageAmount) : "— set on Schedule A") +
           field("Rate Basis", selectField("tp-owner-rateBasis", RATE_BASIS_OPTIONS, tp.ownerPolicy.rateBasis)) +
           field("Premium", '<input type="text" id="tp-owner-premium" value="' + esc(tp.ownerPolicy.premium) + '" placeholder="0.00">') +
-          field("Bill Code", '<input type="text" id="tp-owner-billCode" value="' + esc(tp.ownerPolicy.billCode) + '">') +
+          billCodeField("tp-owner-billCode", tp.ownerPolicy.billCode) +
         '</div>' +
         '<div class="field-grid cols-3" style="margin-top:10px">' +
           contactPickerField("Payor", "tp-owner-payor", o.contacts, tp.ownerPolicy.payorContactId, tp.ownerPolicy.payorOther) +
@@ -4646,7 +4651,7 @@
           field("Rate Basis", selectField("tp-loan-rateBasis", RATE_BASIS_OPTIONS, tp.loanPolicy.rateBasis)) +
           field("Premium", '<input type="text" id="tp-loan-premium" value="' + esc(tp.loanPolicy.premium) + '" placeholder="0.00">') +
           field("Simultaneous Issue Fee", '<input type="text" id="tp-loan-simultaneousIssueFee" value="' + esc(tp.loanPolicy.simultaneousIssueFee) + '" placeholder="0.00">') +
-          field("Bill Code", '<input type="text" id="tp-loan-billCode" value="' + esc(tp.loanPolicy.billCode) + '">') +
+          billCodeField("tp-loan-billCode", tp.loanPolicy.billCode) +
         '</div>' +
         '<div class="field-grid cols-3" style="margin-top:10px">' +
           contactPickerField("Payor", "tp-loan-payor", o.contacts, tp.loanPolicy.payorContactId, tp.loanPolicy.payorOther) +
@@ -4666,7 +4671,7 @@
           '<div class="field-grid cols-3">' +
             '<div class="field"><label>Description</label><input type="text" id="tpmf-desc-' + m.id + '" value="' + esc(m.description) + '" placeholder="e.g. Commitment Fee, CPL Fee, Wire Fee"></div>' +
             '<div class="field"><label>Amount</label><input type="text" id="tpmf-amount-' + m.id + '" value="' + esc(m.amount) + '" placeholder="0.00"></div>' +
-            '<div class="field"><label>Bill Code</label><input type="text" id="tpmf-billcode-' + m.id + '" value="' + esc(m.billCode) + '" placeholder="Optional"></div>' +
+            billCodeField("tpmf-billcode-" + m.id, m.billCode) +
           '</div>' +
           '<div class="field-grid cols-3" style="margin-top:10px">' +
             contactPickerField("Payor", "tpmf-payor-" + m.id, o.contacts, m.payorContactId, m.payorOther) +
@@ -4733,7 +4738,7 @@
         '<div class="field"><label>Endorsement</label><input type="text" id="eend-description-' + e.id + '" value="' + esc(e.description) + '"></div>' +
         '<div class="field"><label>Applies To</label><select id="eend-appliesTo-' + e.id + '">' + appliesToOptions + '</select></div>' +
         '<div class="field"><label>Fee</label><input type="text" id="eend-fee-' + e.id + '" value="' + esc(e.fee) + '" placeholder="0.00"></div>' +
-        '<div class="field"><label>Bill Code</label><input type="text" id="eend-billCode-' + e.id + '" value="' + esc(e.billCode) + '"></div>' +
+        billCodeField("eend-billCode-" + e.id, e.billCode) +
         contactPickerField("Payor", "eend-payor-" + e.id, o.contacts, e.payorContactId, e.payorOther) +
         contactPickerField("Payee", "eend-payee-" + e.id, o.contacts, e.payeeContactId, e.payeeOther) +
         '<div class="field"><label>Underwriter Split % (override)</label><input type="text" id="eend-underwriterSplitPercent-' + e.id + '" value="' + esc(e.underwriterSplitPercent) + '" placeholder="Blank = use file default"></div>' +
@@ -4770,7 +4775,7 @@
           '<div class="field"><label>Endorsement</label><input type="text" id="end-description" placeholder="e.g. ALTA 8.1 — Environmental Protection Lien"></div>' +
           '<div class="field"><label>Applies To</label><select id="end-appliesTo">' + ENDORSEMENT_APPLIES_TO.map(function(a){ return '<option value="' + a + '"' + (a==="Both"?" selected":"") + '>' + a + '</option>'; }).join("") + '</select></div>' +
           '<div class="field"><label>Fee</label><input type="text" id="end-fee" placeholder="0.00"></div>' +
-          '<div class="field"><label>Bill Code</label><input type="text" id="end-billCode"></div>' +
+          billCodeField("end-billCode", "") +
         '</div>' +
         '<div class="add-form" style="grid-template-columns:1fr auto">' +
           '<div class="field"><label>Notes</label><input type="text" id="end-notes" placeholder="Optional"></div>' +
@@ -5560,7 +5565,7 @@
           '<div class="field-grid cols-3">' +
             '<div class="field"><label>Description</label><input type="text" id="chg-desc-' + c.id + '" value="' + esc(c.description) + '" placeholder="e.g. Wire Fee"></div>' +
             '<div class="field"><label>Amount</label><input type="text" id="chg-amount-' + c.id + '" value="' + esc(c.amount) + '" placeholder="0.00"></div>' +
-            '<div class="field"><label>Bill Code</label><input type="text" id="chg-billcode-' + c.id + '" value="' + esc(c.billCode) + '" placeholder="Optional"></div>' +
+            billCodeField("chg-billcode-" + c.id, c.billCode) +
           '</div>' +
           '<div class="field-grid cols-3" style="margin-top:10px">' +
             contactPickerField("Payor", "chg-payor-" + c.id, o.contacts, c.payorContactId, c.payorOther) +
@@ -5722,7 +5727,7 @@
       '<div class="field-grid cols-3">' +
         '<div class="field"><label>Document</label><input type="text" id="rd-desc-' + r.id + '" value="' + esc(r.description) + '" placeholder="e.g. Deed, Deed of Trust"></div>' +
         '<div class="field"><label>Pages</label><input type="text" id="rd-pages-' + r.id + '" value="' + esc(r.pages) + '" placeholder="0"></div>' +
-        '<div class="field"><label>Bill Code</label><input type="text" id="rd-billcode-' + r.id + '" value="' + esc(r.billCode) + '" placeholder="Optional"></div>' +
+        billCodeField("rd-billcode-" + r.id, r.billCode) +
       '</div>' +
       '<div class="field-grid cols-3" style="margin-top:10px">' +
         '<div class="field"><label>Flat Fee (first page)</label><input type="text" id="rd-feePerDoc-' + r.id + '" value="' + esc(r.feePerDoc) + '" placeholder="0.00"></div>' +
@@ -5744,7 +5749,7 @@
       '<div class="field-grid cols-3">' +
         '<div class="field"><label>Description</label><input type="text" id="' + prefix + '-desc-' + r.id + '" value="' + esc(r.description) + '" placeholder="e.g. County Transfer Tax"></div>' +
         '<div class="field"><label>Basis Amount</label><input type="text" id="' + prefix + '-basisAmount-' + r.id + '" value="' + esc(r.basisAmount) + '" placeholder="e.g. Sale Price"></div>' +
-        '<div class="field"><label>Bill Code</label><input type="text" id="' + prefix + '-billcode-' + r.id + '" value="' + esc(r.billCode) + '" placeholder="Optional"></div>' +
+        billCodeField(prefix + "-billcode-" + r.id, r.billCode) +
       '</div>' +
       '<div class="field-grid cols-3" style="margin-top:10px">' +
         '<div class="field"><label>Rate</label><input type="text" id="' + prefix + '-rate-' + r.id + '" value="' + esc(r.rate) + '" placeholder="e.g. 1"></div>' +
@@ -6981,6 +6986,15 @@
   }
   function docFact(labelText, value){
     return '<div class="field"><label>' + labelText + '</label><div style="font-size:13.5px;padding-top:3px">' + esc(value) + '</div></div>';
+  }
+  // Bill Code is optional everywhere it appears -- a short, uppercase, alphanumeric-plus-hyphen
+  // code, auto-uppercased/stripped on save (see sanitizeBillCode) rather than blocked at entry,
+  // consistent with how the rest of this app handles lightly-structured fields.
+  function billCodeField(id, value){
+    return '<div class="field"><label>Bill Code</label><input type="text" id="' + id + '" value="' + esc(value) + '" maxlength="12" class="bill-code-input" placeholder="Optional" autocomplete="off"></div>';
+  }
+  function sanitizeBillCode(v){
+    return String(v||"").toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0,12);
   }
   function docLine(labelText, value){
     return '<div class="doc-line"><div class="doc-label">' + esc(labelText) + '</div><div class="doc-value">' + esc(value || "—") + '</div></div>';
@@ -8847,10 +8861,12 @@
     bindText("tp-prior-policyNumber", function(v){ o.titlePremiums.priorPolicy.policyNumber = v; });
     bindText("tp-prior-policyDate", function(v){ o.titlePremiums.priorPolicy.policyDate = v; });
     bindText("tp-prior-policyAmount", function(v){ o.titlePremiums.priorPolicy.policyAmount = v; });
-    ["rateBasis","premium","billCode","notes"].forEach(function(f){
+    ["rateBasis","premium","notes"].forEach(function(f){
       bindText("tp-owner-" + f, function(v){ o.titlePremiums.ownerPolicy[f] = v; });
       bindText("tp-loan-" + f, function(v){ o.titlePremiums.loanPolicy[f] = v; });
     });
+    bindText("tp-owner-billCode", function(v){ o.titlePremiums.ownerPolicy.billCode = sanitizeBillCode(v); });
+    bindText("tp-loan-billCode", function(v){ o.titlePremiums.loanPolicy.billCode = sanitizeBillCode(v); });
     bindText("tp-loan-simultaneousIssueFee", function(v){ o.titlePremiums.loanPolicy.simultaneousIssueFee = v; });
     bindContactPickerField("tp-owner-payor", o, o.titlePremiums.ownerPolicy, "payorContactId", "payorOther", "payor");
     bindContactPickerField("tp-owner-payee", o, o.titlePremiums.ownerPolicy, "payeeContactId", "payeeOther", "payee");
@@ -8888,7 +8904,7 @@
     o.titlePremiums.miscFees.forEach(function(m){
       bindText("tpmf-desc-" + m.id, function(v){ m.description = v; });
       bindText("tpmf-amount-" + m.id, function(v){ m.amount = v; });
-      bindText("tpmf-billcode-" + m.id, function(v){ m.billCode = v; });
+      bindText("tpmf-billcode-" + m.id, function(v){ m.billCode = sanitizeBillCode(v); });
       bindText("tpmf-notes-" + m.id, function(v){ m.notes = v; });
       bindContactPickerField("tpmf-payor-" + m.id, o, m, "payorContactId", "payorOther", "payor");
       bindContactPickerField("tpmf-payee-" + m.id, o, m, "payeeContactId", "payeeOther", "payee");
@@ -8928,7 +8944,7 @@
         id: uid(), description: d,
         appliesTo: document.getElementById("end-appliesTo").value,
         fee: document.getElementById("end-fee").value.trim(),
-        billCode: document.getElementById("end-billCode").value.trim(),
+        billCode: sanitizeBillCode(document.getElementById("end-billCode").value),
         notes: document.getElementById("end-notes").value.trim(),
         payorContactId: "", payorOther: "", payor: "", payeeContactId: "", payeeOther: "", payee: "", underwriterSplitPercent: "", cdSection: "sectionC"
       };
@@ -8974,7 +8990,7 @@
       e.description = fieldVal("eend-description-" + id);
       e.appliesTo = document.getElementById("eend-appliesTo-" + id).value;
       e.fee = fieldVal("eend-fee-" + id);
-      e.billCode = fieldVal("eend-billCode-" + id);
+      e.billCode = sanitizeBillCode(fieldVal("eend-billCode-" + id));
       e.notes = fieldVal("eend-notes-" + id);
       e.underwriterSplitPercent = fieldVal("eend-underwriterSplitPercent-" + id);
     }
@@ -9397,7 +9413,7 @@
         var propMap = { desc:"description", amount:"amount", billcode:"billCode", split:"split" };
         var el = document.getElementById("chg-" + f + "-" + c.id);
         if(!el) return;
-        function commit(){ c[propMap[f]] = el.value; save(); }
+        function commit(){ c[propMap[f]] = f === "billcode" ? sanitizeBillCode(el.value) : el.value; save(); }
         el.addEventListener("input", commit);
         el.addEventListener("change", commit);
       });
@@ -9488,7 +9504,7 @@
           var propMap = { desc:"description", pages:"pages", billcode:"billCode", feePerDoc:"feePerDoc", feePerPage:"feePerPage", notes:"notes" };
           var el = document.getElementById("rd-" + f + "-" + r.id);
           if(!el) return;
-          el.addEventListener("change", function(){ r[propMap[f]] = el.value; save(); renderTabPanel(); });
+          el.addEventListener("change", function(){ r[propMap[f]] = f === "billcode" ? sanitizeBillCode(el.value) : el.value; save(); renderTabPanel(); });
         });
         bindContactPickerField("rd-payor-" + r.id, o, r, "payorContactId", "payorOther", "payor");
         bindContactPickerField("rd-payee-" + r.id, o, r, "payeeContactId", "payeeOther", "payee");
@@ -9499,7 +9515,7 @@
           var propMap = { desc:"description", basisAmount:"basisAmount", billcode:"billCode", rate:"rate", notes:"notes" };
           var el = document.getElementById(prefix + "-" + f + "-" + r.id);
           if(!el) return;
-          el.addEventListener("change", function(){ r[propMap[f]] = el.value; save(); renderTabPanel(); });
+          el.addEventListener("change", function(){ r[propMap[f]] = f === "billcode" ? sanitizeBillCode(el.value) : el.value; save(); renderTabPanel(); });
         });
         var rateUnitEl = document.getElementById(prefix + "-rateUnit-" + r.id);
         if(rateUnitEl) rateUnitEl.addEventListener("change", function(){ r.rateUnit = rateUnitEl.value; save(); renderTabPanel(); });
