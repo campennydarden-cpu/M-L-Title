@@ -4202,6 +4202,18 @@
      (Taxes and Other Government Fees) maps to HUD's 1200 (Government Recording and Transfer
      Charges) instead. */
   var CD_TO_HUD_SECTION = { sectionB: "section1100", sectionC: "section1100", sectionH: "section1100", sectionE: "section1200" };
+  // Full plain-English CDF Page 2 section labels, shared by the section-assignment <select> in
+  // cdAssignBlock() and the section headings rendered by tplEscrowCdf2() -- one source of truth so
+  // a future label edit only has to happen here.
+  var CD_SECTION_LABELS = {
+    sectionA: "A. Origination Charges",
+    sectionB: "B. Services Borrower Did Not Shop For",
+    sectionC: "C. Services Borrower Did Shop For",
+    sectionE: "E. Taxes and Other Government Fees",
+    sectionF: "F. Prepaids",
+    sectionG: "G. Initial Escrow Payment at Closing",
+    sectionH: "H. Other"
+  };
   function numberRange(n){ var arr = []; for(var i=1;i<=n;i++) arr.push(i); return arr; }
   // Deliberately the CDF section's own length, not the (possibly-shared, possibly-longer) HUD
   // array's length -- "Insert at line N" in the position dropdown built from this is a statement
@@ -4550,7 +4562,7 @@
     var cdSection = item.cdSection && sectionChoices.indexOf(item.cdSection) !== -1 ? item.cdSection : sectionChoices[0];
     var sectionHtml = sectionChoices.length > 1 ?
       '<select id="' + idPrefix + '-cdsection" style="margin-right:6px">' +
-        sectionChoices.map(function(s){ return '<option value="' + s + '"' + (s===cdSection?" selected":"") + '>Section ' + s.replace("section","") + '</option>'; }).join("") +
+        sectionChoices.map(function(s){ return '<option value="' + s + '"' + (s===cdSection?" selected":"") + '>' + esc(CD_SECTION_LABELS[s] || ("Section " + s.replace("section",""))) + '</option>'; }).join("") +
       '</select>' : '';
     var count = cdSectionItemCount(o, cdSection);
     var posOpts = '<option value="next">Next available line</option>' +
@@ -5965,12 +5977,12 @@
     // Additional Title/Escrow Charges, Title Insurance Premiums, Endorsements, and Recording are
     // assigned onto these sections from their own source screens (a Section B/C/E/H choice plus a
     // specific-line-or-next-available position there) rather than via a chip picker here.
-    var loanCosts = '<div class="cdform-row section-label">A. Origination Charges</div>' + pointsLine + tplCdfLineItemTable(p2.sectionA, cols, "cdf2sectionA", "Subtotal", 1) +
-      sectionBlock("sectionB", "B. Services Borrower Did Not Shop For") + sectionBlock("sectionC", "C. Services Borrower Did Shop For");
-    var otherCosts = sectionBlock("sectionE", "E. Taxes and Other Government Fees") +
-      '<div class="cdform-row section-label">F. Prepaids</div>' + prepaidLine + tplCdfLineItemTable(p2.sectionF, cols, "cdf2sectionF", "Subtotal", 1) +
-      '<div class="cdform-row section-label">G. Initial Escrow Payment at Closing</div>' + tplCdfEscrowTable(p2.sectionG, "cdf2sectionG") + aggAdjLine +
-      sectionBlock("sectionH", "H. Other");
+    var loanCosts = '<div class="cdform-row section-label">' + esc(CD_SECTION_LABELS.sectionA) + '</div>' + pointsLine + tplCdfLineItemTable(p2.sectionA, cols, "cdf2sectionA", "Subtotal", 1) +
+      sectionBlock("sectionB", CD_SECTION_LABELS.sectionB) + sectionBlock("sectionC", CD_SECTION_LABELS.sectionC);
+    var otherCosts = sectionBlock("sectionE", CD_SECTION_LABELS.sectionE) +
+      '<div class="cdform-row section-label">' + esc(CD_SECTION_LABELS.sectionF) + '</div>' + prepaidLine + tplCdfLineItemTable(p2.sectionF, cols, "cdf2sectionF", "Subtotal", 1) +
+      '<div class="cdform-row section-label">' + esc(CD_SECTION_LABELS.sectionG) + '</div>' + tplCdfEscrowTable(p2.sectionG, "cdf2sectionG") + aggAdjLine +
+      sectionBlock("sectionH", CD_SECTION_LABELS.sectionH);
     var d = cdfLoanCostsSubtotal(o), i = cdfOtherCostsSubtotal(o), j = cdfBorrowerClosingCostsTotal(o);
     var lenderCredits = parseFloat(p2.lenderCredits) || 0;
     return '<p class="panel-intro">Closing Disclosure &mdash; Page 2 (Closing Cost Details).' + (refi ? ' Refinance mode: Seller-Paid columns dropped (no seller on this file).' : '') + '</p>' +
