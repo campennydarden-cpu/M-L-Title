@@ -4246,8 +4246,15 @@
     var cdfCols = cdfIsRefi(o) ? CDF_PAGE2_COLS_REFI : CDF_PAGE2_COLS_PURCHASE;
     var it = (o.escrow.cdf.page2[cdSection] || []).filter(function(x){ return x.sourceType === sourceType && x.sourceId === sourceId; })[0];
     if(!it) return "";
-    var col = cdfCols.filter(function(c){ return it[c.key]; })[0];
-    return col ? col.label : "Paid by Others";
+    // buildItem() writes "" to every column except the one the Payor resolved to, so the target
+    // column is the one that is *set*, not the one that is truthy: a legitimately $0 or blank fee
+    // (a waived recording fee, an unpriced misc fee) stores 0 / "" in its own target column too.
+    // Testing truthiness here used to mislabel those as "Paid by Others" via the fallback below.
+    var col = cdfCols.filter(function(c){ return it[c.key] !== "" && it[c.key] != null; })[0];
+    // If the fee amount itself is blank, every column is "" and the stored row genuinely doesn't
+    // record which one was targeted -- return "" so the hint just omits the column name rather
+    // than asserting a column the money may not actually be in.
+    return col ? col.label : "";
   }
   // Renders the assignment control (or a confirmation once assigned) for one fee. sectionChoices
   // is the list of CDF section keys the user may pick from (e.g. ["sectionB","sectionC"]); pass a
@@ -4301,8 +4308,13 @@
     return (o.endorsements || []).reduce(function(s, e){ var n = parseFloat(e.fee); return s + (isNaN(n)?0:n); }, 0);
   }
   function rateCalculatorLinksHtml(){
+    // RATE_CALCULATOR_LINKS is a static, code-defined array today (not user input), but route it
+    // through the same scheme allowlist as tp.rateCalculatorUrl anyway -- both render into the same
+    // kind of href sink, and there's no reason to leave one of the two only conditionally safe.
     return RATE_CALCULATOR_LINKS.map(function(c){
-      return '<a class="btn btn-ghost" href="' + esc(c.url) + '" target="_blank" rel="noopener" style="margin-right:8px;margin-bottom:6px;display:inline-block">' + esc(c.name) + ' &#8599;</a>';
+      var safeUrl = sanitizeUrlScheme(c.url);
+      if(!safeUrl) return "";
+      return '<a class="btn btn-ghost" href="' + esc(safeUrl) + '" target="_blank" rel="noopener" style="margin-right:8px;margin-bottom:6px;display:inline-block">' + esc(c.name) + ' &#8599;</a>';
     }).join("");
   }
 
@@ -4315,6 +4327,10 @@
     var uwContacts = o.contacts.filter(function(c){ return c.role === "Underwriter"; });
     var uwContact = uwContacts[0];
     var uwSeedChip = uwContact ? '<button class="seed-chip" data-seed-tp-underwriter="1">+ Copy from file Underwriter contact (' + esc(uwContact.name) + ')</button>' : '';
+    // esc() only neutralizes HTML metacharacters -- it does not stop a stored "javascript:" URL
+    // (restorable via pasted Backup & Restore JSON, same as attachment snapshotHtml) from running
+    // when this link is clicked, so gate the link itself on the scheme-checked value.
+    var safeRateCalcUrl = sanitizeUrlScheme(tp.rateCalculatorUrl);
 
     var premiumOnly = titlePremiumOnlyTotal(o);
     var agentPct = parseFloat(tp.agentPercent), uwPct = parseFloat(tp.underwriterPercent);
@@ -4397,7 +4413,7 @@
         '<div class="field-grid" style="margin-top:10px">' +
           field("Other Rate Calculator / Quote Link", '<input type="text" id="tp-rateCalculatorUrl" value="' + esc(tp.rateCalculatorUrl) + '" placeholder="Paste a specific underwriter/quote link for this file">') +
         '</div>' +
-        (tp.rateCalculatorUrl ? '<p class="field-hint" style="margin-top:-4px"><a href="' + esc(tp.rateCalculatorUrl) + '" target="_blank" rel="noopener">Open this link &#8599;</a></p>' : '') +
+        (safeRateCalcUrl ? '<p class="field-hint" style="margin-top:-4px"><a href="' + esc(safeRateCalcUrl) + '" target="_blank" rel="noopener">Open this link &#8599;</a></p>' : '') +
         '<div class="field-grid cols-3" style="margin-top:16px">' +
           field("Agent Split %", '<input type="text" id="tp-agentPercent" value="' + esc(tp.agentPercent) + '" placeholder="e.g. 70">') +
           field("Underwriter Split %", '<input type="text" id="tp-underwriterPercent" value="' + esc(tp.underwriterPercent) + '" placeholder="e.g. 30">') +

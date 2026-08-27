@@ -60,7 +60,17 @@ function runOne(file) {
       // Most scripts print a single summary line like "PAGE ERRORS: []" or "PAGE ERRORS: none"
       // even when nothing went wrong -- only flag it when that line (or a per-error "PAGE
       // ERROR: <message>" line) actually carries content, not just an empty/none summary.
-      const pageErrors = lines.some(l => /page error/i.test(l) && !/:\s*(\[\]|none)\s*$/i.test(l.trim()));
+      //
+      // Assertion lines are excluded explicitly: several scripts phrase an assertion as
+      // "No page errors on <screen>? true", which matches /page error/i but is a *passing*
+      // check, not an error. That false positive made four healthy files (deed_addresses,
+      // deed_independent, docprep2, item_l) permanently show "PAGE ERRORS" alongside
+      // "0 failed". Assertions are already tallied above, so a genuine "? false" there is
+      // reported as a real failure -- skipping them here loses no signal.
+      const pageErrors = lines.some(l =>
+        /page error/i.test(l) &&
+        !ASSERTION_RE.test(l) &&
+        !/:\s*(\[\]|none)\s*$/i.test(l.trim()));
       // A non-zero exit always means a crash, even if some assertions printed before the crash --
       // a mid-script uncaught exception (e.g. a stale selector further down) silently truncates
       // the rest of that file's assertions, which the old (pass===0 && fail===0) guard missed
