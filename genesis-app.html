@@ -420,6 +420,7 @@
   "use strict";
 
   var STORAGE_KEY = "genesis_orders_v1";
+  var CURRENT_SCHEMA_VERSION = 1;
   var REQUIREMENT_SEEDS = [
     "Warranty Deed from current owner to Buyer, to be recorded",
     "Release of existing Deed of Trust, to be recorded",
@@ -1466,6 +1467,18 @@
     rec.stampTaxes.forEach(function(r){ backfillRecordingRow(r, true); });
   }
 
+  function migrateOrder(o){
+    // fromVersion captures what this order looked like before this call, in case a future
+    // migration needs to branch on it (anything pre-versioning, including every order that
+    // predates this field entirely, is treated as version 0).
+    var fromVersion = (typeof o.schemaVersion === "number") ? o.schemaVersion : 0;
+    normalizeOrder(o); // existing idempotent field-shape backfills -- always safe to re-run
+    // Version-gated, non-idempotent migrations for future schema changes go here, e.g.:
+    // if(fromVersion < 2){ ...one-time transform that can't be expressed as a safe-to-repeat backfill... }
+    o.schemaVersion = CURRENT_SCHEMA_VERSION;
+    return o;
+  }
+
   function load(){
     var raw = null;
     try{
@@ -1484,7 +1497,7 @@
       setSaveBanner("error", "Genesis could not read your saved orders on startup (" + state.loadError.message + "). Nothing was deleted — the original data is still sitting in browser storage untouched. Click Back Up Data to view/copy the raw recovered text, then get help before continuing.");
       return;
     }
-    state.orders.forEach(normalizeOrder);
+    state.orders.forEach(migrateOrder);
     seedDemoOrderIfFirstEverLoad();
     save();
   }
@@ -1691,7 +1704,7 @@
         if(Array.isArray(incoming.attachments)){
           incoming.attachments.forEach(function(a){ if(a && a.snapshotHtml) a.snapshotHtml = sanitizeSnapshotHtml(a.snapshotHtml); });
         }
-        normalizeOrder(incoming);
+        migrateOrder(incoming);
         if(idx >= 0){ state.orders[idx] = incoming; updated++; } else { state.orders.push(incoming); added++; }
       });
       // Restoring from pasted backup JSON is the explicit recovery action for a failed load -- it
@@ -1711,6 +1724,7 @@
   function blankOrder(){
     return {
       id: uid(),
+      schemaVersion: CURRENT_SCHEMA_VERSION,
       createdAt: new Date().toISOString(),
       fileNo: "GEN-" + String(state.orders.length + 1001),
       titleStatus: "In Progress",
