@@ -6,12 +6,12 @@
 const { chromium } = require('playwright');
 
 (async () => {
-  const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const browser = await chromium.launch();
   const page = await browser.newPage();
   const errors = [];
   page.on('pageerror', err => { errors.push(err.message); console.log('PAGE ERROR:', err.message); });
   page.on('console', msg => { if (msg.type() === 'error') { errors.push('console: ' + msg.text()); console.log('CONSOLE ERROR:', msg.text()); } });
-  const APP = 'file:///home/claude/title-escrow-project/genesis-app.html';
+  const APP = require('url').pathToFileURL(require('path').join(__dirname, '..', 'genesis-app.html')).href;
 
   const goTab = (k) => page.click(`[data-tab="${k}"]`);
   const getOrder = () => page.evaluate(() => JSON.parse(localStorage.getItem('genesis_orders_v1'))[0]);

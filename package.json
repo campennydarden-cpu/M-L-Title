@@ -1,0 +1,11 @@
+{
+  "name": "genesis",
+  "version": "1.0.0",
+  "description": "Genesis title/escrow application",
+  "scripts": {
+    "test": "node tests/run-all.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.62.0"
+  }
+}

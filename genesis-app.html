@@ -1629,6 +1629,12 @@
         if(!incoming || !incoming.id) return;
         var idx = -1;
         for(var i=0;i<state.orders.length;i++){ if(state.orders[i].id === incoming.id){ idx = i; break; } }
+        // Defense in depth: sanitize any restored attachment snapshot at import time too, not just
+        // at render (tplAttachments) -- a pasted backup is the one place snapshotHtml genuinely
+        // becomes attacker-controlled (it's otherwise only ever written by renderDocBody/renderCtcBody).
+        if(Array.isArray(incoming.attachments)){
+          incoming.attachments.forEach(function(a){ if(a && a.snapshotHtml) a.snapshotHtml = sanitizeSnapshotHtml(a.snapshotHtml); });
+        }
         normalizeOrder(incoming);
         if(idx >= 0){ state.orders[idx] = incoming; updated++; } else { state.orders.push(incoming); added++; }
       });
@@ -1975,6 +1981,121 @@
       return ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c];
     });
   }
+
+  // --- URL scheme allowlist -------------------------------------------------
+  // Used anywhere a stored/pasted URL (rate-calculator links, restored backup
+  // JSON, etc.) is rendered into an href. esc() only escapes HTML metacharacters --
+  // it does not stop a "javascript:"/"vbscript:"/"data:" URL from executing when
+  // clicked, so every href sink built from user-controlled text must route
+  // through this first.
+  function sanitizeUrlScheme(url){
+    // Strip control characters (including tab/newline/CR) anywhere in the string --
+    // browsers ignore these when parsing a URL scheme, so "java\tscript:" is a
+    // known filter-bypass for naive scheme checks.
+    var s = String(url == null ? "" : url).replace(/[\x00-\x1F\x7F]+/g, "").trim();
+    if(!s) return "";
+    var m = /^([a-z][a-z0-9+.-]*):/i.exec(s);
+    if(m){
+      var scheme = m[1].toLowerCase();
+      if(scheme !== "http" && scheme !== "https" && scheme !== "mailto") return "";
+    }
+    return s;
+  }
+
+  // --- Snapshot HTML sanitizer -----------------------------------------------
+  // tplAttachments() renders a.snapshotHtml (a frozen Commitment/CTC document
+  // body from renderDocBody()/renderCtcBody()) via innerHTML. That field is
+  // restorable wholesale from pasted backup JSON with no validation, so it must
+  // be sanitized before every render (and again on import, as defense in depth)
+  // rather than trusted as "our own" markup. Strict allowlist: only the
+  // layout/structural tags the generated documents actually use are kept;
+  // anything script-capable or embeddable is dropped outright (with its
+  // content), and any other unrecognized tag is unwrapped (its text/children
+  // survive, just not the wrapping element) so a real Commitment snapshot never
+  // renders with chunks of text silently missing.
+  var SNAPSHOT_ALLOWED_TAGS = { DIV:1, SPAN:1, P:1, BR:1, HR:1, STRONG:1, B:1, EM:1, I:1, U:1, SMALL:1, SUP:1, SUB:1,
+    H1:1, H2:1, H3:1, H4:1, H5:1, H6:1, TABLE:1, THEAD:1, TBODY:1, TFOOT:1, TR:1, TD:1, TH:1, UL:1, OL:1, LI:1, A:1 };
+  var SNAPSHOT_DANGEROUS_TAGS = { SCRIPT:1, STYLE:1, IFRAME:1, OBJECT:1, EMBED:1, SVG:1, MATH:1, LINK:1, META:1,
+    BASE:1, FORM:1, INPUT:1, BUTTON:1, SELECT:1, OPTION:1, TEXTAREA:1, VIDEO:1, AUDIO:1, SOURCE:1, TRACK:1,
+    CANVAS:1, NOSCRIPT:1, FRAME:1, FRAMESET:1, APPLET:1, IMG:1, PICTURE:1, TEMPLATE:1, XML:1 };
+  var SNAPSHOT_ALLOWED_ATTRS = { "class":1, "style":1 };
+
+  function sanitizeSnapshotStyleAttr(v){
+    var s = String(v == null ? "" : v);
+    // Blocks legacy expression()/javascript: style-based execution and any
+    // url()/@import that could load external content.
+    if(/javascript:|expression\s*\(|@import|url\s*\(/i.test(s)) return "";
+    return s;
+  }
+
+  function sanitizeSnapshotAttrs(el, tag){
+    var names = [];
+    for(var i=0;i<el.attributes.length;i++) names.push(el.attributes[i].name);
+    names.forEach(function(name){
+      var lname = name.toLowerCase();
+      if(lname.indexOf("on") === 0){ el.removeAttribute(name); return; }
+      if(lname === "style"){
+        var safeStyle = sanitizeSnapshotStyleAttr(el.getAttribute("style"));
+        if(safeStyle) el.setAttribute("style", safeStyle); else el.removeAttribute("style");
+        return;
+      }
+      if(lname === "href" && tag === "A"){
+        var safeHref = sanitizeUrlScheme(el.getAttribute("href"));
+        if(safeHref) el.setAttribute("href", safeHref); else el.removeAttribute("href");
+        return;
+      }
+      if(!SNAPSHOT_ALLOWED_ATTRS[lname]) el.removeAttribute(name);
+    });
+    if(tag === "A"){
+      // Force safe link behavior regardless of what was pasted/restored.
+      el.setAttribute("target", "_blank");
+      el.setAttribute("rel", "noopener noreferrer");
+    }
+  }
+
+  function sanitizeSnapshotNode(node){
+    var child = node.firstChild;
+    while(child){
+      var next = child.nextSibling;
+      if(child.nodeType === 1){ // Element
+        var tag = child.tagName;
+        if(SNAPSHOT_DANGEROUS_TAGS[tag]){
+          node.removeChild(child);
+        } else if(!SNAPSHOT_ALLOWED_TAGS[tag]){
+          // Unknown/unlisted tag: sanitize its subtree, then unwrap (keep the
+          // now-clean children, drop just the wrapping element).
+          sanitizeSnapshotNode(child);
+          while(child.firstChild) node.insertBefore(child.firstChild, child);
+          node.removeChild(child);
+        } else {
+          sanitizeSnapshotAttrs(child, tag);
+          sanitizeSnapshotNode(child);
+        }
+      } else if(child.nodeType !== 3 && child.nodeType !== 8){ // keep text + comments only
+        node.removeChild(child);
+      }
+      child = next;
+    }
+  }
+
+  function sanitizeSnapshotHtml(html){
+    var raw = String(html == null ? "" : html);
+    if(!raw) return "";
+    try{
+      // <template> content is an inert DocumentFragment: not attached to the
+      // document, no browsing context, so scripts don't run and resources
+      // (e.g. an <img onerror>) never load/fire while we walk and strip it here.
+      var tmpl = document.createElement("template");
+      tmpl.innerHTML = raw;
+      sanitizeSnapshotNode(tmpl.content);
+      return tmpl.innerHTML;
+    }catch(e){
+      // Fail closed: never let attacker-controlled markup through unsanitized
+      // because of an unexpected parsing error.
+      return "";
+    }
+  }
+
   function fmtMoney(v){
     var n = parseFloat(v);
     if(isNaN(n)) return "";
@@ -4003,6 +4124,11 @@
      Charges) instead. */
   var CD_TO_HUD_SECTION = { sectionB: "section1100", sectionC: "section1100", sectionH: "section1100", sectionE: "section1200" };
   function numberRange(n){ var arr = []; for(var i=1;i<=n;i++) arr.push(i); return arr; }
+  // Deliberately the CDF section's own length, not the (possibly-shared, possibly-longer) HUD
+  // array's length -- "Insert at line N" in the position dropdown built from this is a statement
+  // about the CDF section on screen. See resolveHudIndex() in assignItemToCdHud() below for how
+  // that CDF-relative N gets translated into a safe position within the shared HUD section1100
+  // array without reordering rows other CDF sections already placed there.
   function cdSectionItemCount(o, cdSection){ return (o.escrow.cdf.page2[cdSection] || []).length; }
   function isAssignedToCdHud(o, sourceType, sourceId){
     if(!sourceType) return false;
@@ -4017,28 +4143,111 @@
     });
     return found;
   }
+  // Maps a candidate's chosen Payor to the CDF/HUD column pair the amount should actually land
+  // in, instead of always defaulting to Borrower At Closing / Borrower regardless of who's paying.
+  // cand.payorContactId / cand.payorName come from the source item's own contact-picker fields
+  // (see bindContactPickerField) -- "__other__" means a free-text payor with no Contact/role behind
+  // it. Only "no payor chosen at all" (falsy payorContactId) keeps the historical Borrower default,
+  // per the task's compatibility requirement for files that never touched Payor.
+  function resolveCdHudPayorCols(o, cand, cdfCols){
+    var BORROWER = { cdKey: "borrowerAtClosing", hudKey: "borrowerAmount" };
+    if(!cand.payorContactId) return BORROWER; // no payor set -- unchanged legacy behavior
+    var role = null;
+    if(cand.payorContactId !== "__other__"){
+      var c = (o.contacts || []).filter(function(x){ return x.id === cand.payorContactId; })[0];
+      role = c ? c.role : null; // contact deleted/missing -> null role, falls through to third-party below
+    }
+    if(role === "Buyer/Borrower") return BORROWER;
+    if(role === "Seller"){
+      var hasSellerCol = cdfCols.some(function(c){ return c.key === "sellerAtClosing"; });
+      // Refi's CDF_PAGE2_COLS_REFI drops the Seller-Paid columns entirely (no seller on a refi) --
+      // writing "sellerAtClosing" there would set a key tplCdfLineItemTable/lineItemTotal never
+      // look at, silently losing the money. Fall back to Paid by Others instead.
+      return hasSellerCol ? { cdKey: "sellerAtClosing", hudKey: "sellerAmount" } : { cdKey: "paidByOthers", hudKey: null };
+    }
+    // Third party: Lender, Settlement Agent, Underwriter, any other/unrecognized role, or a
+    // free-text "__other__" payor with no role at all. TRID's CD has a real "Paid by Others" column
+    // for exactly this, excluded from the Borrower/Seller totals (cdfBorrowerClosingCostsTotal /
+    // cdfSellerAtClosingCostsTotal only read the Borrower*/Seller* keys) -- so this doesn't overstate
+    // either party's total. HUD_PAGE2_COLS has no third-party column at all (only Borrower/Seller);
+    // decision: leave the HUD amount out of both rather than guess whose total should absorb money
+    // neither the buyer nor the seller is actually paying -- hudKey: null makes buildItem() below
+    // write "" to every HUD column for this line, same as it already does for every non-target column.
+    return { cdKey: "paidByOthers", hudKey: null };
+  }
   function assignItemToCdHud(o, cand, cdSection, posVal, sectionLabel){
     if(!cdSection || isAssignedToCdHud(o, cand.sourceType, cand.sourceId)) return;
     var cdfCols = cdfIsRefi(o) ? CDF_PAGE2_COLS_REFI : CDF_PAGE2_COLS_PURCHASE;
     var cdfTarget = o.escrow.cdf.page2[cdSection];
     var hudTarget = o.escrow.hud.page2[CD_TO_HUD_SECTION[cdSection]];
+    var payorCols = resolveCdHudPayorCols(o, cand, cdfCols);
     function buildItem(cols, amountKey){
       var it = { id: uid(), description: cand.label, sourceType: cand.sourceType, sourceId: cand.sourceId };
       cols.forEach(function(c){ it[c.key] = (c.key === amountKey) ? cand.amount : ""; });
       return it;
     }
-    function insertAt(arr, item){
-      if(!arr) return;
-      if(posVal === "next" || !posVal){ arr.push(item); return; }
-      var idx = parseInt(posVal, 10) - 1;
+    // "Insert at line N" is a statement about the CDF section the user is looking at (posVal is
+    // built from cdSectionItemCount(o, cdSection) above, i.e. that section's own array length) --
+    // it is NOT a valid index into the HUD array. For sectionE->section1200 the two arrays always
+    // have identical membership/order (nothing else feeds 1200), so reusing the same index there
+    // is harmless. But section1100 is shared by B/C/H: it can be longer than any one CDF section's
+    // own array, so blindly splicing HUD at the CDF-derived index silently reorders rows the user
+    // never chose (see task write-up). Fix: resolve the CDF index to a real position first, then
+    // derive the HUD's insertion point from where that section's *existing* neighbouring row
+    // already sits in the HUD array -- never from the raw count -- so previously-assigned
+    // section1100 rows can never change relative order.
+    function resolveIndex(arr, pos){
+      if(pos === "next" || !pos) return arr.length;
+      var idx = parseInt(pos, 10) - 1;
       if(isNaN(idx) || idx < 0) idx = 0;
       if(idx > arr.length) idx = arr.length;
+      return idx;
+    }
+    function hudPosOf(arr, sourceType, sourceId){
+      for(var i=0;i<arr.length;i++){ if(arr[i].sourceType === sourceType && arr[i].sourceId === sourceId) return i; }
+      return -1;
+    }
+    // cdIdx is resolved against cdfTarget's own (pre-insert) length/contents -- exactly what the
+    // "Insert at line N" dropdown showed the user. hudIdx is then derived by locating that same
+    // neighbouring CDF row's existing position inside hudTarget, so the HUD splice always lands
+    // next to a row that's actually there rather than at a raw offset borrowed from another array.
+    function resolveHudIndex(cdIdx){
+      if(!hudTarget) return 0;
+      if(cdIdx < cdfTarget.length){
+        var beforeItem = cdfTarget[cdIdx];
+        var beforePos = hudPosOf(hudTarget, beforeItem.sourceType, beforeItem.sourceId);
+        if(beforePos !== -1) return beforePos;
+      } else if(cdfTarget.length > 0){
+        var afterItem = cdfTarget[cdfTarget.length - 1];
+        var afterPos = hudPosOf(hudTarget, afterItem.sourceType, afterItem.sourceId);
+        if(afterPos !== -1) return afterPos + 1;
+      }
+      // No neighbour found in the CDF section itself (it's currently empty, or -- defensively --
+      // its item isn't mirrored in hudTarget yet): appending can never violate the "don't reorder
+      // existing rows" invariant, so that's the only safe fallback.
+      return hudTarget.length;
+    }
+    function insertAt(arr, item, idx){
+      if(!arr) return;
       arr.splice(idx, 0, item);
     }
-    insertAt(cdfTarget, buildItem(cdfCols, "borrowerAtClosing"));
-    insertAt(hudTarget, buildItem(HUD_PAGE2_COLS, "borrowerAmount"));
+    var cdIdx = resolveIndex(cdfTarget, posVal);
+    var hudIdx = resolveHudIndex(cdIdx);
+    insertAt(cdfTarget, buildItem(cdfCols, payorCols.cdKey), cdIdx);
+    insertAt(hudTarget, buildItem(HUD_PAGE2_COLS, payorCols.hudKey), hudIdx);
     logHistoryEvent(o, sectionLabel, "added", cand.label + " assigned to CD Section " + cdSection.replace("section","") + ": " + fmtMoney(cand.amount));
     save(); renderTabPanel();
+  }
+  // Looks back at the CDF line just assigned (or previously assigned) for sourceType/sourceId and
+  // reports which column key actually holds the money, so the "✓ Assigned" hint below can name it
+  // (Payor-routed assignments no longer all land in the same column -- see resolveCdHudPayorCols).
+  function assignedCdColumnLabel(o, sourceType, sourceId, cdSection){
+    if(!cdSection) return "";
+    var cdfCols = cdfIsRefi(o) ? CDF_PAGE2_COLS_REFI : CDF_PAGE2_COLS_PURCHASE;
+    var it = (o.escrow.cdf.page2[cdSection] || []).filter(function(x){ return x.sourceType === sourceType && x.sourceId === sourceId; })[0];
+    if(!it) return "";
+    var col = cdfCols.filter(function(c){ return it[c.key]; })[0];
+    return col ? col.label : "Paid by Others";
   }
   // Renders the assignment control (or a confirmation once assigned) for one fee. sectionChoices
   // is the list of CDF section keys the user may pick from (e.g. ["sectionB","sectionC"]); pass a
@@ -4048,7 +4257,8 @@
     if(!sourceId) return "";
     if(isAssignedToCdHud(o, sourceType, sourceId)){
       var foundSection = assignedCdSectionOf(o, sourceType, sourceId);
-      return '<p class="field-hint" style="margin-top:8px;color:var(--green)">&#10003; Assigned to CD Section ' + esc((foundSection||"").replace("section","")) + ' / HUD ' + esc((CD_TO_HUD_SECTION[foundSection]||"").replace("section","")) + '. Delete that line on the CD/HUD screen to reassign.</p>';
+      var colLabel = assignedCdColumnLabel(o, sourceType, sourceId, foundSection);
+      return '<p class="field-hint" style="margin-top:8px;color:var(--green)">&#10003; Assigned to CD Section ' + esc((foundSection||"").replace("section","")) + (colLabel ? ' (' + esc(colLabel) + ')' : '') + ' / HUD ' + esc((CD_TO_HUD_SECTION[foundSection]||"").replace("section","")) + '. Delete that line on the CD/HUD screen to reassign.</p>';
     }
     var cdSection = item.cdSection && sectionChoices.indexOf(item.cdSection) !== -1 ? item.cdSection : sectionChoices[0];
     var sectionHtml = sectionChoices.length > 1 ?
@@ -5967,7 +6177,7 @@
         var row = recordRow(titleText, detail + (detail ? ' &middot; ' : '') + viewLink, "data-del-att", a.id, "data-edit-att", a.id);
         var previewBlock = expanded ?
           '<div style="margin:10px 0 14px 18px;padding:20px 24px;border-left:2px solid var(--border);background:var(--paper);border-radius:0 8px 8px 0;max-height:520px;overflow:auto">' +
-            a.snapshotHtml +
+            sanitizeSnapshotHtml(a.snapshotHtml) +
           '</div>' : '';
         return '<div>' + row + previewBlock + '</div>';
       }).join("");
@@ -8336,13 +8546,15 @@
     bindContactPickerField("tp-loan-payor", o, o.titlePremiums.loanPolicy, "payorContactId", "payorOther", "payor");
     bindContactPickerField("tp-loan-payee", o, o.titlePremiums.loanPolicy, "payeeContactId", "payeeOther", "payee");
     wireCdAssignBlock(o, "tp-owner-assign", o.titlePremiums.ownerPolicy, function(){
-      return { label: "Owner's Title Insurance Premium", amount: o.titlePremiums.ownerPolicy.premium, sourceType: "tpremium", sourceId: "owner" };
+      return { label: "Owner's Title Insurance Premium", amount: o.titlePremiums.ownerPolicy.premium, sourceType: "tpremium", sourceId: "owner", payorContactId: o.titlePremiums.ownerPolicy.payorContactId, payorName: o.titlePremiums.ownerPolicy.payor };
     }, "Title Insurance Premiums", ["sectionH"]);
     wireCdAssignBlock(o, "tp-loan-premium-assign", o.titlePremiums.loanPolicy, function(){
-      return { label: "Lender's Title Insurance Premium", amount: o.titlePremiums.loanPolicy.premium, sourceType: "tpremium", sourceId: "loan" };
+      return { label: "Lender's Title Insurance Premium", amount: o.titlePremiums.loanPolicy.premium, sourceType: "tpremium", sourceId: "loan", payorContactId: o.titlePremiums.loanPolicy.payorContactId, payorName: o.titlePremiums.loanPolicy.payor };
     }, "Title Insurance Premiums", ["sectionB","sectionC"]);
+    // Simultaneous Issue Fee has no Payor field of its own -- it's a fee on the loan policy premium,
+    // so it inherits the Loan Policy Premium's Payor.
     wireCdAssignBlock(o, "tp-loan-si-assign", o.titlePremiums.loanPolicy.simultaneousIssue, function(){
-      return { label: "Simultaneous Issue Fee", amount: o.titlePremiums.loanPolicy.simultaneousIssueFee, sourceType: "tpremium", sourceId: "simultaneous" };
+      return { label: "Simultaneous Issue Fee", amount: o.titlePremiums.loanPolicy.simultaneousIssueFee, sourceType: "tpremium", sourceId: "simultaneous", payorContactId: o.titlePremiums.loanPolicy.payorContactId, payorName: o.titlePremiums.loanPolicy.payor };
     }, "Title Insurance Premiums", ["sectionB","sectionC"]);
     document.querySelectorAll("[data-seed-tp-underwriter]").forEach(function(el){
       el.addEventListener("click", function(){
@@ -8369,7 +8581,7 @@
       bindText("tpmf-notes-" + m.id, function(v){ m.notes = v; });
       bindContactPickerField("tpmf-payor-" + m.id, o, m, "payorContactId", "payorOther", "payor");
       bindContactPickerField("tpmf-payee-" + m.id, o, m, "payeeContactId", "payeeOther", "payee");
-      wireCdAssignBlock(o, "tpmf-assign-" + m.id, m, function(){ return { label: m.description || "Misc. Title Fee", amount: m.amount, sourceType: "tpmisc", sourceId: m.id }; }, "Title Insurance Premiums", ["sectionB","sectionC"]);
+      wireCdAssignBlock(o, "tpmf-assign-" + m.id, m, function(){ return { label: m.description || "Misc. Title Fee", amount: m.amount, sourceType: "tpmisc", sourceId: m.id, payorContactId: m.payorContactId, payorName: m.payor }; }, "Title Insurance Premiums", ["sectionB","sectionC"]);
     });
     var btnAddTpmf = document.getElementById("btn-add-tpmf");
     if(btnAddTpmf) btnAddTpmf.addEventListener("click", function(){
@@ -8471,7 +8683,7 @@
     o.endorsements.forEach(function(e){
       bindContactPickerField("eend-payor-" + e.id, o, e, "payorContactId", "payorOther", "payor", function(){ commitEndEditFields(e); });
       bindContactPickerField("eend-payee-" + e.id, o, e, "payeeContactId", "payeeOther", "payee", function(){ commitEndEditFields(e); });
-      wireCdAssignBlock(o, "end-assign-" + e.id, e, function(){ return { label: "Endorsement: " + (e.description || "(unnamed)"), amount: e.fee, sourceType: "endorsement", sourceId: e.id }; }, "Endorsements", e.appliesTo === "Owner's" ? ["sectionH"] : ["sectionB","sectionC"]);
+      wireCdAssignBlock(o, "end-assign-" + e.id, e, function(){ return { label: "Endorsement: " + (e.description || "(unnamed)"), amount: e.fee, sourceType: "endorsement", sourceId: e.id, payorContactId: e.payorContactId, payorName: e.payor }; }, "Endorsements", e.appliesTo === "Owner's" ? ["sectionH"] : ["sectionB","sectionC"]);
     });
     var btnGotoPremFromEnd = document.getElementById("btn-goto-premiums-from-endorsements");
     if(btnGotoPremFromEnd) btnGotoPremFromEnd.addEventListener("click", function(evt){
@@ -8884,7 +9096,7 @@
       if(pocEl) pocEl.addEventListener("change", function(){ c.poc = pocEl.checked; save(); });
       bindContactPickerField("chg-payor-" + c.id, o, c, "payorContactId", "payorOther", "payor");
       bindContactPickerField("chg-payee-" + c.id, o, c, "payeeContactId", "payeeOther", "payee");
-      wireCdAssignBlock(o, "chg-assign-" + c.id, c, function(){ return { label: c.description || "Additional Charge", amount: c.amount, sourceType: "escrowcharge", sourceId: c.id }; }, "Escrow / Closing", ["sectionB","sectionC","sectionH"]);
+      wireCdAssignBlock(o, "chg-assign-" + c.id, c, function(){ return { label: c.description || "Additional Charge", amount: c.amount, sourceType: "escrowcharge", sourceId: c.id, payorContactId: c.payorContactId, payorName: c.payor }; }, "Escrow / Closing", ["sectionB","sectionC","sectionH"]);
     });
     var btnAddCharge = document.getElementById("btn-add-charge");
     if(btnAddCharge) btnAddCharge.addEventListener("click", function(){
@@ -8969,7 +9181,7 @@
         });
         bindContactPickerField("rd-payor-" + r.id, o, r, "payorContactId", "payorOther", "payor");
         bindContactPickerField("rd-payee-" + r.id, o, r, "payeeContactId", "payeeOther", "payee");
-        wireCdAssignBlock(o, "rd-assign-" + r.id, r, function(){ return { label: "Recording Fee: " + (r.description || "Document"), amount: computeRecordingDocAmount(r), sourceType: "recdoc", sourceId: r.id }; }, "Escrow / Closing", ["sectionE"]);
+        wireCdAssignBlock(o, "rd-assign-" + r.id, r, function(){ return { label: "Recording Fee: " + (r.description || "Document"), amount: computeRecordingDocAmount(r), sourceType: "recdoc", sourceId: r.id, payorContactId: r.payorContactId, payorName: r.payor }; }, "Escrow / Closing", ["sectionE"]);
       }
       function wireTaxRow(r, prefix, sourceType){
         ["desc","basisAmount","billcode","rate","notes"].forEach(function(f){
@@ -8982,7 +9194,7 @@
         if(rateUnitEl) rateUnitEl.addEventListener("change", function(){ r.rateUnit = rateUnitEl.value; save(); renderTabPanel(); });
         bindContactPickerField(prefix + "-payor-" + r.id, o, r, "payorContactId", "payorOther", "payor");
         bindContactPickerField(prefix + "-payee-" + r.id, o, r, "payeeContactId", "payeeOther", "payee");
-        wireCdAssignBlock(o, prefix + "-assign-" + r.id, r, function(){ return { label: (sourceType === "transfertax" ? "Transfer Tax: " : "Stamp Tax: ") + (r.description || "Tax"), amount: computeRecordingTaxAmount(r), sourceType: sourceType, sourceId: r.id }; }, "Escrow / Closing", ["sectionE"]);
+        wireCdAssignBlock(o, prefix + "-assign-" + r.id, r, function(){ return { label: (sourceType === "transfertax" ? "Transfer Tax: " : "Stamp Tax: ") + (r.description || "Tax"), amount: computeRecordingTaxAmount(r), sourceType: sourceType, sourceId: r.id, payorContactId: r.payorContactId, payorName: r.payor }; }, "Escrow / Closing", ["sectionE"]);
       }
       rec.documents.forEach(wireDocRow);
       rec.transferTaxes.forEach(function(r){ wireTaxRow(r, "rtt", "transfertax"); });

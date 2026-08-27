@@ -1,8 +1,10 @@
 *.tmp
 *.bak
 .DS_Store
+/node_modules
 
 # Vault notes live in Obsidian - not tracked here to avoid stale duplicates
 *.md
 !tests/legacy/README.md
+!tests/README.md
 bookmarks.json

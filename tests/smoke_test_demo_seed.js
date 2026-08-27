@@ -6,12 +6,12 @@ const { chromium } = require('playwright');
 // once dismissed/deleted, and never touch a profile that already has real orders.
 
 (async () => {
-  const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const browser = await chromium.launch();
   const page = await browser.newPage();
   const errors = [];
   page.on('pageerror', err => errors.push(err.message));
 
-  const APP = 'file:///home/claude/title-escrow-project/genesis-app.html';
+  const APP = require('url').pathToFileURL(require('path').join(__dirname, '..', 'genesis-app.html')).href;
   const STORAGE_KEY = 'genesis_orders_v1';
   const DEMO_KEY = 'genesis_demo_seeded_v1';
 
