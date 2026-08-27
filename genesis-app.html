@@ -101,6 +101,13 @@
   }
   .sidebar-backup-btn:hover{ background: rgba(255,255,255,0.14); color: white; }
 
+  .sidebar-firm-analytics-btn{
+    display: block; width: 100%; margin-top: 6px; padding: 8px 12px;
+    background: rgba(79,175,160,0.14); color: #BFE6DE; border: 1px solid rgba(79,175,160,0.5);
+    border-radius: 7px; font-size: 12px; font-weight: 600; cursor: pointer; text-align: center;
+  }
+  .sidebar-firm-analytics-btn:hover{ background: rgba(79,175,160,0.24); color: white; }
+
   /* ---------------- Save status banner ---------------- */
   .save-banner{
     position: fixed; top: 0; left: 0; right: 0; z-index: 9999;
@@ -2351,7 +2358,7 @@
         '<div><div class="brand-name">Genesis</div><div class="brand-sub">M&amp;L Title &amp; Escrow</div></div>' +
       '</div>' +
       '<button class="new-order-btn" id="btn-new-order">+ New Order</button>' +
-      '<button class="sidebar-backup-btn" id="btn-firm-analytics" type="button" style="margin-top:6px' + (state.showFirmAnalytics ? ";background:var(--teal);color:#fff" : "") + '">&#128202; Firm Analytics</button>' +
+      '<button class="sidebar-firm-analytics-btn" id="btn-firm-analytics" type="button" style="margin-top:6px' + (state.showFirmAnalytics ? ";background:var(--teal);color:#fff" : "") + '">&#128202; Firm Analytics</button>' +
       '<div class="order-list-label">Open Orders</div>' +
       '<ul class="order-list">' + listHtml + '</ul>' +
       '<button class="sidebar-backup-btn" id="btn-sidebar-backup" type="button">&#128190; Back Up Data</button>' +
